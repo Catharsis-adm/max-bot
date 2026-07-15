@@ -1,16 +1,16 @@
-from maxbot.bot import Bot
-from maxbot.dispatcher import Dispatcher
-from maxbot.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+import os
+from umaxbot import Bot, Dispatcher
+from umaxbot.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 
-# Токен для рабьоты макса
-BOT_TOKEN = "f9LHodD0cOIDaws8b1l8j69CR1npvge7CYVSvTvk45VWeVyGtFoYYV3xggF7_XMHnpL_nr_rGfB5g0lMwqB_" 
+# Берем токен из переменной окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN", "f9LHodD0cOIDaws8b1l8j69CR1npvge7CYVSvTvk45VWeVyGtFoYYV3xggF7_XMHnpL_nr_rGfB5g0lMwqB_")
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(bot)
 
 @dp.message()
 async def on_message(message: Message):
-    # Кнопка для запроса контакта
+    # Создаем кнопку для запроса контакта
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📱 Поделиться номером", request_contact=True)]
     ])
@@ -20,5 +20,5 @@ async def on_message(message: Message):
         reply_markup=keyboard
     )
 
-# Запускаем бота (Long Polling)
-dp.run()
+# Запускаем бота (правильный способ)
+bot.run(dp)
