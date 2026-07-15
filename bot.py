@@ -3,7 +3,7 @@ from umaxbot import Bot, Dispatcher
 from umaxbot.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 
 # Берем токен из переменной окружения
-BOT_TOKEN = os.getenv("BOT_TOKEN", "f9Lh0dD0c0IDaws8b118j69CR1npvge7CYSvVtvk45VWeVgTfoYYV3xggF7_XMhInpL_nr_rGFB5g01MwuqB_")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "f9Lh0dD0c0IDaws8b118j69CRinpvg7CYSvVtvk45VnVgTfoYYV3xggF7_XMhInpL_nr_rGFB5g01Mwuq8_")
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -21,5 +21,5 @@ async def on_message(message: Message):
         reply_markup=keyboard
     )
 
-# Запускаем бота (правильный способ)
+# Запускаем бота
 bot.run(dp)
