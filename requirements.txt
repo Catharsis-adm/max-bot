@@ -1,1 +1,1 @@
-umaxbot
+maxapi
