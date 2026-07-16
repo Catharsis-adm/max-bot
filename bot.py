@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO)
 TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
 
 bot = Bot(TOKEN)
+print([x for x in dir(bot) if "sub" in x.lower() or "web" in x.lower()])
 dp = Dispatcher()
 
 # Пользователи, от которых ждём номер телефона
@@ -68,16 +69,21 @@ async def messages(event: MessageCreated):
 async def main():
     try:
         subscriptions = await bot.get_subscriptions()
+        logging.info(f"Найдены подписки: {subscriptions}")
 
-        for subscription in subscriptions:
-            await subscription.delete()
+        if subscriptions:
+            await bot.delete_webhook()
 
-        logging.info("Старые webhook-подписки удалены")
+        logging.info("Webhook очищен")
 
     except Exception as e:
         logging.warning(f"Не удалось удалить подписки: {e}")
 
     await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())
