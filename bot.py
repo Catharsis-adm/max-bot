@@ -7,7 +7,7 @@ from maxapi.types import MessageCreated
 
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = "f9LHodD0cOIDaws8b1l8j69CR1npvge7CYVSvTvk45VWeVyGtFoYYV3xggF7_XMHnpL_nr_rGfB5g0lMwqB_"
+TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
