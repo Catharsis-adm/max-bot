@@ -66,6 +66,12 @@ async def messages(event: MessageCreated):
     )
 
 async def main():
+    try:
+        await bot.delete_subscriptions()
+        logging.info("Старые webhook-подписки удалены")
+    except Exception as e:
+        logging.warning(f"Не удалось удалить старые подписки: {e}")
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
