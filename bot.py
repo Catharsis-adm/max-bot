@@ -31,7 +31,7 @@ TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn
 # ADMIN_IDS = {123456789}
 #
 # Пока можно оставить пустым, но тогда /users будет недоступна.
-ADMIN_IDS = set(277114915)
+ADMIN_IDS = {277114915}
 
 DB_NAME = "users.db"
 
