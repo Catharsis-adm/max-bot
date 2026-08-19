@@ -3,15 +3,18 @@ import logging
 import re
 
 from maxapi import Bot, Dispatcher
-from maxapi.types import (
-    MessageCreated,
-    RequestContactButton,
-    ButtonsPayload,
-)
+from maxapi.types import MessageCreated
 
 logging.basicConfig(level=logging.INFO)
 
 TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
+
+print("========== ПРОВЕРКА ТОКЕНА ==========")
+print("TOKEN задан:", bool(TOKEN))
+print("Длина токена:", len(TOKEN))
+print("Начало:", TOKEN[:5])
+print("Конец:", TOKEN[-5:])
+print("=====================================")
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
