@@ -6,6 +6,16 @@ from maxapi import Bot, Dispatcher
 from maxapi.types import MessageCreated
 import maxapi.types
 
+print("========== MAXAPI TYPES ==========")
+print([
+    x for x in dir(maxapi.types)
+    if "keyboard" in x.lower()
+    or "button" in x.lower()
+    or "contact" in x.lower()
+])
+print("===================================")
+import maxapi.types
+
 print("КЛАВИАТУРНЫЕ ТИПЫ:")
 print([
     x for x in dir(maxapi.types)
