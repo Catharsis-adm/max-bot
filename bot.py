@@ -25,13 +25,6 @@ logging.basicConfig(
 )
 
 TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
-
-if not TOKEN:
-    raise RuntimeError(
-        "Не задан MAX_BOT_TOKEN. "
-        "Установи переменную окружения с токеном бота."
-    )
-
 # ID администратора, которому разрешена команда /users.
 #
 # Например:
