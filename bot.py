@@ -4,6 +4,7 @@ import re
 import secrets
 import sqlite3
 from datetime import datetime, timezone
+from calendar import monthrange
 
 from maxapi import Bot, Dispatcher
 from maxapi.types import MessageCreated
@@ -19,14 +20,73 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
+# =========================================================
 # ВСТАВЬ СЮДА НОВЫЙ ТОКЕН БОТА
+# Старый токен, который был опубликован ранее,
+# обязательно перевыпусти.
+# =========================================================
+
 TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
+
 
 # MAX user_id администратора
 ADMIN_IDS = {277114915}
 
-# Файл базы данных
+
+# Файл базы
 DB_NAME = "users.db"
+
+
+# =========================================================
+# НАСТРОЙКИ КУПОНОВ
+# =========================================================
+
+# Последний уже существовавший номер:
+# 01267
+#
+# Поэтому первый новый купон будет:
+# 01268
+#
+INITIAL_COUPON_NUMBER = 1267
+
+
+# Все призы равновероятны.
+# Дубли удалены.
+PRIZES = [
+    "1 час игры в VR шлеме",
+
+    "1 час игры на любой консоли",
+
+    "15 минут игры в VR Автосимуляторе",
+
+    "30 минут игры на консоли",
+
+    "1 час в VR шлеме, при аренде от 1 часа VR шлема",
+
+    "1 час игр на консоли (XBox / PS5), при аренде от 1 часа VR шлема",
+
+    "15 минут игр на VR Автосимуляторе, "
+    "при аренде 15 минут на Автосимуляторе",
+
+    "30 минут игры на консоли (XBox / PS5), "
+    "при аренде от 1 часа VR шлема",
+
+    "Бонус 500 ₽ при покупке сертификата от 1000 ₽",
+
+    "Скидка 500 ₽ на покупку любого абонемента",
+
+    "Скидка 500 ₽ при аренде VR шлема на дом",
+
+    "Скидка 300 ₽ на второй час аренды VR шлема",
+
+    "1 час игр на консоли (XBox / PS5), "
+    "при аренде от 1 часа аренды консоли",
+
+    "2 часа игры в VR",
+
+    "15 минут игр на автосимуляторе, "
+    "при аренде от 1 часа VR шлема",
+]
 
 
 # =========================================================
@@ -37,8 +97,8 @@ bot = Bot(TOKEN)
 dp = Dispatcher()
 
 
-# Пользователи, от которых ждём телефон.
-# Это временное состояние.
+# Временное состояние пользователей,
+# которым нужно предоставить номер.
 waiting_phone = set()
 
 
@@ -48,7 +108,7 @@ waiting_phone = set()
 
 def get_db():
     """
-    Открываем соединение с SQLite.
+    Открываем SQLite.
     """
 
     connection = sqlite3.connect(DB_NAME)
@@ -60,10 +120,14 @@ def get_db():
 
 def init_db():
     """
-    Создаём таблицу пользователей.
+    Создаём необходимые таблицы.
     """
 
     with get_db() as db:
+
+        # -------------------------------------------------
+        # УЧАСТНИКИ
+        # -------------------------------------------------
 
         db.execute(
             """
@@ -74,12 +138,57 @@ def init_db():
 
                 phone TEXT NOT NULL UNIQUE,
 
-                coupon TEXT NOT NULL UNIQUE,
+                coupon TEXT,
 
                 created_at TEXT NOT NULL
             )
             """
         )
+
+        # -------------------------------------------------
+        # КУПОНЫ
+        # -------------------------------------------------
+
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS coupons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                coupon_number INTEGER NOT NULL UNIQUE,
+
+                user_id INTEGER NOT NULL,
+
+                prize TEXT NOT NULL,
+
+                created_at TEXT NOT NULL,
+
+                expires_at TEXT NOT NULL,
+
+                status TEXT NOT NULL DEFAULT 'active',
+
+                FOREIGN KEY (user_id)
+                    REFERENCES users(user_id)
+            )
+            """
+        )
+
+        # -------------------------------------------------
+        # СЧЁТЧИК КУПОНОВ
+        # -------------------------------------------------
+
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS coupon_counter (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+
+                current_number INTEGER NOT NULL
+            )
+            """
+        )
+
+        # -------------------------------------------------
+        # Индексы
+        # -------------------------------------------------
 
         db.execute(
             """
@@ -95,6 +204,52 @@ def init_db():
             """
         )
 
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_coupons_user_id
+            ON coupons(user_id)
+            """
+        )
+
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_coupons_status
+            ON coupons(status)
+            """
+        )
+
+        # -------------------------------------------------
+        # Инициализируем счётчик
+        # -------------------------------------------------
+
+        cursor = db.execute(
+            """
+            SELECT current_number
+            FROM coupon_counter
+            WHERE id = 1
+            """
+        )
+
+        counter = cursor.fetchone()
+
+        if counter is None:
+
+            db.execute(
+                """
+                INSERT INTO coupon_counter (
+                    id,
+                    current_number
+                )
+                VALUES (1, ?)
+                """,
+                (INITIAL_COUPON_NUMBER,)
+            )
+
+            logging.info(
+                f"Счётчик купонов установлен на "
+                f"{INITIAL_COUPON_NUMBER}"
+            )
+
         db.commit()
 
     logging.info(
@@ -102,9 +257,13 @@ def init_db():
     )
 
 
+# =========================================================
+# USERS
+# =========================================================
+
 def get_user(user_id: int):
     """
-    Получаем пользователя по MAX user_id.
+    Получаем участника.
     """
 
     with get_db() as db:
@@ -118,26 +277,12 @@ def get_user(user_id: int):
             (user_id,)
         )
 
-        user = cursor.fetchone()
-
-        if user:
-            logging.info(
-                f"Пользователь найден в БД: "
-                f"user_id={user_id}, "
-                f"coupon={user['coupon']}"
-            )
-        else:
-            logging.info(
-                f"Пользователь НЕ найден в БД: "
-                f"user_id={user_id}"
-            )
-
-        return user
+        return cursor.fetchone()
 
 
 def get_users_count() -> int:
     """
-    Получаем количество участников.
+    Количество участников.
     """
 
     with get_db() as db:
@@ -149,44 +294,20 @@ def get_users_count() -> int:
             """
         )
 
-        count = cursor.fetchone()[0]
-
-    logging.info(
-        f"КОЛИЧЕСТВО ПОЛЬЗОВАТЕЛЕЙ В БД: {count}"
-    )
-
-    return count
-
-
-def get_last_user():
-    """
-    Получаем последнего зарегистрированного пользователя.
-    """
-
-    with get_db() as db:
-
-        cursor = db.execute(
-            """
-            SELECT *
-            FROM users
-            ORDER BY id DESC
-            LIMIT 1
-            """
-        )
-
-        return cursor.fetchone()
+        return cursor.fetchone()[0]
 
 
 def create_user(
     user_id: int,
-    phone: str,
-    coupon: str
+    phone: str
 ):
     """
-    Создаём нового участника.
+    Создаём участника.
     """
 
-    created_at = datetime.now(timezone.utc).isoformat()
+    created_at = datetime.now(
+        timezone.utc
+    ).isoformat()
 
     with get_db() as db:
 
@@ -198,12 +319,11 @@ def create_user(
                 coupon,
                 created_at
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, NULL, ?)
             """,
             (
                 user_id,
                 phone,
-                coupon,
                 created_at
             )
         )
@@ -211,11 +331,243 @@ def create_user(
         db.commit()
 
     logging.info(
-        "ПОЛЬЗОВАТЕЛЬ СОХРАНЁН В БД: "
-        f"user_id={user_id}, "
-        f"phone={phone}, "
-        f"coupon={coupon}"
+        f"Пользователь сохранён: "
+        f"user_id={user_id}, phone={phone}"
     )
+
+
+# =========================================================
+# COUPON NUMBER
+# =========================================================
+
+def get_next_coupon_number():
+    """
+    Получаем следующий номер купона.
+
+    01268
+    01269
+    01270
+    ...
+    """
+
+    with get_db() as db:
+
+        cursor = db.execute(
+            """
+            SELECT current_number
+            FROM coupon_counter
+            WHERE id = 1
+            """
+        )
+
+        row = cursor.fetchone()
+
+        if row is None:
+
+            current_number = INITIAL_COUPON_NUMBER
+
+            db.execute(
+                """
+                INSERT INTO coupon_counter (
+                    id,
+                    current_number
+                )
+                VALUES (1, ?)
+                """,
+                (current_number,)
+            )
+
+        else:
+
+            current_number = row["current_number"]
+
+        next_number = current_number + 1
+
+        db.execute(
+            """
+            UPDATE coupon_counter
+            SET current_number = ?
+            WHERE id = 1
+            """,
+            (next_number,)
+        )
+
+        db.commit()
+
+    logging.info(
+        f"Выдан следующий номер купона: "
+        f"{current_number:05d}"
+    )
+
+    return current_number
+
+
+# =========================================================
+# COUPON EXPIRATION
+# =========================================================
+
+def add_one_month(dt):
+    """
+    Добавляет ровно один календарный месяц.
+
+    Например:
+
+    19.08 → 19.09
+    31.01 → 28.02
+    """
+
+    year = dt.year
+
+    month = dt.month + 1
+
+    if month == 13:
+
+        month = 1
+        year += 1
+
+    last_day = monthrange(
+        year,
+        month
+    )[1]
+
+    day = min(
+        dt.day,
+        last_day
+    )
+
+    return dt.replace(
+        year=year,
+        month=month,
+        day=day
+    )
+
+
+# =========================================================
+# CREATE COUPON
+# =========================================================
+
+def create_coupon(user_id: int):
+    """
+    Создаём новый купон для пользователя.
+
+    Каждый вызов этой функции создаёт
+    НОВЫЙ отдельный купон.
+
+    Один пользователь может иметь
+    несколько купонов.
+    """
+
+    created_at = datetime.now(
+        timezone.utc
+    )
+
+    expires_at = add_one_month(
+        created_at
+    )
+
+    # Получаем последовательный номер
+    coupon_number = get_next_coupon_number()
+
+    # Случайно выбираем приз
+    prize = secrets.choice(PRIZES)
+
+    with get_db() as db:
+
+        db.execute(
+            """
+            INSERT INTO coupons (
+                coupon_number,
+                user_id,
+                prize,
+                created_at,
+                expires_at,
+                status
+            )
+            VALUES (?, ?, ?, ?, ?, 'active')
+            """,
+            (
+                coupon_number,
+                user_id,
+                prize,
+                created_at.isoformat(),
+                expires_at.isoformat()
+            )
+        )
+
+        db.commit()
+
+    logging.info(
+        "СОЗДАН КУПОН: "
+        f"номер={coupon_number:05d}, "
+        f"user_id={user_id}, "
+        f"prize={prize}, "
+        f"expires={expires_at.isoformat()}"
+    )
+
+    return (
+        coupon_number,
+        prize,
+        created_at,
+        expires_at
+    )
+
+
+# =========================================================
+# COUPON STATISTICS
+# =========================================================
+
+def get_coupons_count():
+    """
+    Всего выдано купонов.
+    """
+
+    with get_db() as db:
+
+        cursor = db.execute(
+            """
+            SELECT COUNT(*)
+            FROM coupons
+            """
+        )
+
+        return cursor.fetchone()[0]
+
+
+def get_active_coupons_count():
+    """
+    Количество активных купонов.
+    """
+
+    with get_db() as db:
+
+        cursor = db.execute(
+            """
+            SELECT COUNT(*)
+            FROM coupons
+            WHERE status = 'active'
+            """
+        )
+
+        return cursor.fetchone()[0]
+
+
+def get_last_coupon():
+    """
+    Последний выданный купон.
+    """
+
+    with get_db() as db:
+
+        cursor = db.execute(
+            """
+            SELECT *
+            FROM coupons
+            ORDER BY coupon_number DESC
+            LIMIT 1
+            """
+        )
+
+        return cursor.fetchone()
 
 
 # =========================================================
@@ -227,9 +579,16 @@ def normalize_phone(phone: str) -> str:
     Приводим российский номер к формату 7XXXXXXXXXX.
     """
 
-    digits = re.sub(r"\D", "", phone)
+    digits = re.sub(
+        r"\D",
+        "",
+        phone
+    )
 
-    if digits.startswith("8") and len(digits) == 11:
+    if (
+        digits.startswith("8")
+        and len(digits) == 11
+    ):
         digits = "7" + digits[1:]
 
     return digits
@@ -237,7 +596,7 @@ def normalize_phone(phone: str) -> str:
 
 def is_phone(phone: str) -> bool:
     """
-    Проверяем российский номер телефона.
+    Проверяем российский номер.
     """
 
     digits = normalize_phone(phone)
@@ -249,55 +608,12 @@ def is_phone(phone: str) -> bool:
 
 
 # =========================================================
-# COUPON
-# =========================================================
-
-def generate_coupon() -> str:
-    """
-    Генерируем уникальный купон.
-
-    Пример:
-
-    MAX-8K4P7Q
-    """
-
-    while True:
-
-        code = (
-            "MAX-"
-            + secrets.token_hex(3).upper()
-        )
-
-        with get_db() as db:
-
-            cursor = db.execute(
-                """
-                SELECT id
-                FROM users
-                WHERE coupon = ?
-                """,
-                (code,)
-            )
-
-            exists = cursor.fetchone()
-
-        if not exists:
-
-            logging.info(
-                f"Сгенерирован новый купон: {code}"
-            )
-
-            return code
-
-
-# =========================================================
 # CONTACT
 # =========================================================
 
 def get_phone_from_event(event):
     """
-    Пытаемся получить номер телефона
-    из контактного вложения MAX.
+    Получаем телефон из контакта MAX.
     """
 
     try:
@@ -311,10 +627,6 @@ def get_phone_from_event(event):
             or []
         )
 
-        logging.info(
-            f"Получены attachments: {attachments}"
-        )
-
         for attachment in attachments:
 
             payload = getattr(
@@ -326,10 +638,7 @@ def get_phone_from_event(event):
             if payload is None:
                 continue
 
-            # ---------------------------------------------
-            # Вариант 1: payload.phone
-            # ---------------------------------------------
-
+            # payload.phone
             phone = getattr(
                 payload,
                 "phone",
@@ -337,18 +646,9 @@ def get_phone_from_event(event):
             )
 
             if phone:
-
-                logging.info(
-                    f"Телефон найден через payload.phone: "
-                    f"{phone}"
-                )
-
                 return phone
 
-            # ---------------------------------------------
-            # Вариант 2: VCF
-            # ---------------------------------------------
-
+            # VCF
             vcf_info = getattr(
                 payload,
                 "vcf_info",
@@ -357,10 +657,6 @@ def get_phone_from_event(event):
 
             if vcf_info:
 
-                logging.info(
-                    f"Получен VCF: {vcf_info}"
-                )
-
                 match = re.search(
                     r"TEL[^:]*:([^\r\n]+)",
                     vcf_info,
@@ -368,32 +664,19 @@ def get_phone_from_event(event):
                 )
 
                 if match:
-
-                    phone = match.group(1).strip()
-
-                    logging.info(
-                        f"Телефон найден через VCF: "
-                        f"{phone}"
-                    )
-
-                    return phone
+                    return match.group(1).strip()
 
     except Exception as e:
 
         logging.exception(
-            f"Ошибка при получении номера "
-            f"из контакта: {e}"
+            f"Ошибка получения телефона: {e}"
         )
-
-    logging.warning(
-        "Телефон в событии не найден."
-    )
 
     return None
 
 
 # =========================================================
-# ОБРАБОТКА ТЕЛЕФОНА
+# PROCESS PHONE
 # =========================================================
 
 async def process_phone(
@@ -402,29 +685,11 @@ async def process_phone(
     phone: str
 ):
     """
-    Обрабатываем полученный телефон.
-
-    1. Проверяем номер.
-    2. Проверяем пользователя.
-    3. Генерируем купон.
-    4. Сохраняем пользователя.
-    5. Отправляем купон.
+    Обрабатываем телефон и выдаём купон.
     """
 
-    logging.info(
-        f"Начинаем обработку телефона: "
-        f"user_id={user_id}, phone={phone}"
-    )
-
-    # -----------------------------------------------------
-    # Проверка телефона
-    # -----------------------------------------------------
-
+    # Проверяем номер
     if not is_phone(phone):
-
-        logging.warning(
-            f"Некорректный телефон: {phone}"
-        )
 
         await event.message.answer(
             "❌ Не удалось распознать номер телефона.\n\n"
@@ -435,10 +700,6 @@ async def process_phone(
 
     phone = normalize_phone(phone)
 
-    logging.info(
-        f"Нормализованный телефон: {phone}"
-    )
-
     # -----------------------------------------------------
     # Проверяем пользователя
     # -----------------------------------------------------
@@ -448,80 +709,84 @@ async def process_phone(
     if existing_user:
 
         logging.info(
-            f"Пользователь уже зарегистрирован: "
+            f"Пользователь уже есть в БД: "
             f"user_id={user_id}"
         )
 
-        waiting_phone.discard(user_id)
+        # ВАЖНО:
+        # Теперь мы НЕ выдаём старый купон.
+        #
+        # Каждый успешный запрос телефона
+        # создаёт новый отдельный купон.
+        #
+        # Поэтому пользователь может получить:
+        #
+        # 01268
+        # 01269
+        # 01270
+        #
+        # и т.д.
 
-        await event.message.answer(
-            "🎟 Вы уже получали свой купон!\n\n"
-            f"Ваш купон:\n\n"
-            f"🎁 {existing_user['coupon']}\n\n"
-            "Покажите это сообщение администратору "
-            "или сделайте скриншот."
-        )
+    else:
 
-        return
+        # Новый пользователь
+        try:
+
+            create_user(
+                user_id=user_id,
+                phone=phone
+            )
+
+        except sqlite3.IntegrityError:
+
+            await event.message.answer(
+                "❌ Этот номер телефона уже "
+                "использовался для получения купона."
+            )
+
+            waiting_phone.discard(user_id)
+
+            return
 
     # -----------------------------------------------------
-    # Генерируем купон
-    # -----------------------------------------------------
-
-    coupon = generate_coupon()
-
-    # -----------------------------------------------------
-    # Сохраняем пользователя
+    # Создаём новый купон
     # -----------------------------------------------------
 
     try:
 
-        create_user(
-            user_id=user_id,
-            phone=phone,
-            coupon=coupon
-        )
+        (
+            coupon_number,
+            prize,
+            created_at,
+            expires_at
+        ) = create_coupon(user_id)
 
-    except sqlite3.IntegrityError as e:
+    except Exception as e:
 
         logging.exception(
-            f"Ошибка сохранения пользователя "
-            f"user_id={user_id}: {e}"
+            f"Ошибка создания купона: {e}"
         )
 
         await event.message.answer(
-            "❌ Этот номер телефона уже "
-            "использовался для получения купона."
+            "❌ Произошла ошибка при создании купона.\n\n"
+            "Попробуйте ещё раз."
         )
-
-        waiting_phone.discard(user_id)
 
         return
 
-    # -----------------------------------------------------
-    # Пользователь успешно создан
-    # -----------------------------------------------------
-
     waiting_phone.discard(user_id)
 
-    # Проверяем, что он реально появился в БД
-    saved_user = get_user(user_id)
+    # -----------------------------------------------------
+    # Форматируем дату
+    # -----------------------------------------------------
 
-    if saved_user:
+    created_text = created_at.strftime(
+        "%d.%m.%Y"
+    )
 
-        logging.info(
-            f"ПРОВЕРКА БД УСПЕШНА: "
-            f"user_id={user_id}, "
-            f"coupon={saved_user['coupon']}"
-        )
-
-    else:
-
-        logging.error(
-            f"КРИТИЧЕСКАЯ ОШИБКА: "
-            f"user_id={user_id} не найден "
-            f"после сохранения!"
-        )
+    expires_text = expires_at.strftime(
+        "%d.%m.%Y"
+    )
 
     # -----------------------------------------------------
     # Отправляем купон
@@ -529,16 +794,79 @@ async def process_phone(
 
     await event.message.answer(
         "🎉 Поздравляем! Вы получили новый купон! 🎁\n\n"
-        f"Ваш купон:\n\n"
-        f"🎟 {coupon}\n\n"
+
+        f"🎟 Номер купона: "
+        f"{coupon_number:05d}\n\n"
+
+        f"🎁 Ваш приз:\n"
+        f"{prize}\n\n"
+
+        f"📅 Выдан: {created_text}\n"
+        f"⏳ Действует до: {expires_text}\n\n"
+
         "Покажите это сообщение администратору "
-        "или выслите его скриншотом."
+        "или сделайте скриншот."
     )
 
     logging.info(
         f"КУПОН ВЫДАН: "
-        f"user_id={user_id}, "
-        f"coupon={coupon}"
+        f"{coupon_number:05d} | "
+        f"user_id={user_id} | "
+        f"{prize}"
+    )
+
+
+# =========================================================
+# ADMIN /USERS
+# =========================================================
+
+async def admin_users(event):
+
+    user_id = event.message.sender.user_id
+
+    if user_id not in ADMIN_IDS:
+
+        await event.message.answer(
+            "❌ У вас нет доступа к этой команде."
+        )
+
+        return
+
+    users_count = get_users_count()
+
+    coupons_count = get_coupons_count()
+
+    active_count = get_active_coupons_count()
+
+    last_coupon = get_last_coupon()
+
+    text = (
+        "👑 СТАТИСТИКА\n\n"
+
+        f"👥 Участников: {users_count}\n"
+        f"🎟 Всего купонов: {coupons_count}\n"
+        f"🟢 Активных купонов: {active_count}\n"
+    )
+
+    if last_coupon:
+
+        text += (
+            "\n━━━━━━━━━━━━━━━━━━\n\n"
+
+            "🎟 ПОСЛЕДНИЙ КУПОН\n\n"
+
+            f"Номер: "
+            f"{last_coupon['coupon_number']:05d}\n\n"
+
+            f"Приз:\n"
+            f"{last_coupon['prize']}\n\n"
+
+            f"MAX user_id: "
+            f"{last_coupon['user_id']}\n"
+        )
+
+    await event.message.answer(
+        text
     )
 
 
@@ -553,10 +881,6 @@ async def messages(event: MessageCreated):
 
     user_id = user.user_id
 
-    # -----------------------------------------------------
-    # Получаем текст
-    # -----------------------------------------------------
-
     text = (
         getattr(
             event.message.body,
@@ -566,98 +890,13 @@ async def messages(event: MessageCreated):
         or ""
     ).strip()
 
-    logging.info(
-        f"Сообщение: "
-        f"user_id={user_id}, "
-        f"text={text!r}"
-    )
-
     # =====================================================
-    # ADMIN: /users
+    # /users
     # =====================================================
 
     if text.lower() == "/users":
 
-        logging.info(
-            f"Команда /users от user_id={user_id}"
-        )
-
-        # Проверяем администратора
-        if user_id not in ADMIN_IDS:
-
-            logging.warning(
-                f"Пользователь {user_id} "
-                f"попытался использовать /users"
-            )
-
-            await event.message.answer(
-                "❌ У вас нет доступа к этой команде."
-            )
-
-            return
-
-        # Количество
-        count = get_users_count()
-
-        # Последний участник
-        last_user = get_last_user()
-
-        if last_user:
-
-            # Форматируем дату
-            created_at = last_user["created_at"]
-
-            try:
-
-                dt = datetime.fromisoformat(
-                    created_at
-                )
-
-                created_at = dt.strftime(
-                    "%d.%m.%Y %H:%M"
-                )
-
-            except Exception:
-
-                pass
-
-            statistics_text = (
-                "👥 СТАТИСТИКА БОТА\n\n"
-
-                f"Всего участников: {count}\n\n"
-
-                "━━━━━━━━━━━━━━━━━━\n\n"
-
-                "👤 ПОСЛЕДНИЙ УЧАСТНИК\n\n"
-
-                f"MAX user_id: "
-                f"{last_user['user_id']}\n"
-
-                f"📱 Телефон: "
-                f"{last_user['phone']}\n"
-
-                f"🎟 Купон: "
-                f"{last_user['coupon']}\n"
-
-                f"📅 Регистрация: "
-                f"{created_at}"
-            )
-
-        else:
-
-            statistics_text = (
-                "👥 СТАТИСТИКА БОТА\n\n"
-                "Всего участников: 0\n\n"
-                "Пока никто не зарегистрирован."
-            )
-
-        logging.info(
-            f"/users: участников в БД = {count}"
-        )
-
-        await event.message.answer(
-            statistics_text
-        )
+        await admin_users(event)
 
         return
 
@@ -670,8 +909,9 @@ async def messages(event: MessageCreated):
     if phone:
 
         logging.info(
-            f"Получен номер через кнопку "
-            f"от пользователя {user_id}: {phone}"
+            f"Получен номер через кнопку: "
+            f"user_id={user_id}, "
+            f"phone={phone}"
         )
 
         await process_phone(
@@ -689,11 +929,6 @@ async def messages(event: MessageCreated):
     if user_id in waiting_phone:
 
         if is_phone(text):
-
-            logging.info(
-                f"Пользователь {user_id} "
-                f"отправил телефон вручную."
-            )
 
             await process_phone(
                 event,
@@ -720,7 +955,6 @@ async def messages(event: MessageCreated):
 
     waiting_phone.add(user_id)
 
-    # Создаём кнопку запроса контакта
     buttons = ButtonsPayload(
         buttons=[
             [
@@ -743,11 +977,15 @@ async def messages(event: MessageCreated):
     await event.message.answer(
         text=(
             f"{first_name}, здравствуйте! 👋\n\n"
+
             "Вы нашли секретный подарок! 🎁\n\n"
+
             "Чтобы он стал вашим, бот должен "
             "убедиться, что вы — реальный человек.\n\n"
+
             "Для подтверждения нажмите кнопку ниже "
             "и поделитесь своим номером телефона.\n\n"
+
             "Или можете отправить номер вручную."
         ),
         attachments=[buttons]
@@ -760,20 +998,18 @@ async def messages(event: MessageCreated):
 
 async def main():
 
-    # Инициализация базы
+    # Создаём / проверяем БД
     init_db()
 
-    logging.info(
-        f"Используется база: {DB_NAME}"
-    )
+    # Статистика при запуске
+    users_count = get_users_count()
 
-    # Сразу покажем количество пользователей
-    # при запуске.
-    count = get_users_count()
+    coupons_count = get_coupons_count()
 
     logging.info(
-        f"При запуске в базе находится "
-        f"{count} участников."
+        f"При запуске: "
+        f"участников={users_count}, "
+        f"купонов={coupons_count}"
     )
 
     logging.info(
