@@ -21,25 +21,106 @@ waiting_phone = set()
 
 
 def is_phone(phone: str) -> bool:
+    """Проверяем российский номер телефона."""
     digits = re.sub(r"\D", "", phone)
 
-    if len(digits) == 11 and digits.startswith(("7", "8")):
-        return True
+    return (
+        len(digits) == 11
+        and digits.startswith(("7", "8"))
+    )
 
-    return False
+
+def get_phone_from_event(event):
+    """
+    Пытаемся достать номер телефона из контактного вложения MAX.
+    """
+    try:
+        attachments = event.message.body.attachments or []
+
+        for attachment in attachments:
+            # Контакт может находиться в payload
+            payload = getattr(attachment, "payload", None)
+
+            if payload is None:
+                continue
+
+            # Возможные варианты имени поля
+            phone = getattr(payload, "phone", None)
+
+            if phone:
+                return phone
+
+            # VCF-информация
+            vcf_info = getattr(payload, "vcf_info", None)
+
+            if vcf_info:
+                match = re.search(
+                    r"TEL[^:]*:([^\r\n]+)",
+                    vcf_info,
+                    re.IGNORECASE
+                )
+
+                if match:
+                    return match.group(1).strip()
+
+    except Exception as e:
+        logging.exception(
+            f"Ошибка при получении номера из контакта: {e}"
+        )
+
+    return None
 
 
 @dp.message_created()
 async def messages(event: MessageCreated):
-    text = (event.message.body.text or "").strip()
-    user = event.message.sender
 
-    # Если ждём номер
-    if user.user_id in waiting_phone:
+    user = event.message.sender
+    user_id = user.user_id
+
+    # Получаем обычный текст сообщения
+    text = (
+        getattr(event.message.body, "text", None)
+        or ""
+    ).strip()
+
+    # =========================================================
+    # 1. Пытаемся получить номер через кнопку "Поделиться номером"
+    # =========================================================
+
+    phone = get_phone_from_event(event)
+
+    if phone:
+        logging.info(
+            f"Получен номер через кнопку от пользователя "
+            f"{user_id}: {phone}"
+        )
+
+        if user_id in waiting_phone:
+            waiting_phone.remove(user_id)
+
+        if is_phone(phone):
+            await event.message.answer(
+                "🎉 Поздравляем! Вы получили новый купон! 🎁\n\n"
+                "Вы можете показать данное сообщение администратору "
+                "или выслать его скриншотом."
+            )
+        else:
+            await event.message.answer(
+                "❌ Не удалось распознать номер телефона.\n\n"
+                "Попробуйте поделиться номером ещё раз."
+            )
+
+        return
+
+    # =========================================================
+    # 2. Если ждём номер — разрешаем ввести его вручную
+    # =========================================================
+
+    if user_id in waiting_phone:
 
         if is_phone(text):
 
-            waiting_phone.remove(user.user_id)
+            waiting_phone.remove(user_id)
 
             await event.message.answer(
                 "🎉 Поздравляем! Вы получили новый купон! 🎁\n\n"
@@ -52,13 +133,17 @@ async def messages(event: MessageCreated):
             await event.message.answer(
                 "❌ Это не похоже на номер телефона.\n\n"
                 "Нажмите кнопку «📱 Поделиться номером» "
-                "или отправьте номер вручную."
+                "или отправьте номер вручную.\n\n"
+                "Например: 89991234567"
             )
 
         return
 
-    # Запоминаем пользователя
-    waiting_phone.add(user.user_id)
+    # =========================================================
+    # 3. Первое сообщение пользователя
+    # =========================================================
+
+    waiting_phone.add(user_id)
 
     # Создаём кнопку запроса контакта
     buttons = ButtonsPayload(
@@ -71,7 +156,6 @@ async def messages(event: MessageCreated):
         ]
     ).pack()
 
-    # Отправляем сообщение с кнопкой
     await event.message.answer(
         text=(
             f"{user.first_name}, здравствуйте! 👋\n\n"
@@ -87,6 +171,8 @@ async def messages(event: MessageCreated):
 
 
 async def main():
+    # Старые webhook удалять больше не нужно.
+    # У вас уже настроен polling.
     await dp.start_polling(bot)
 
 
