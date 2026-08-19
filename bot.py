@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import re
 import secrets
 import sqlite3
@@ -8,10 +7,6 @@ from datetime import datetime, timezone
 
 from maxapi import Bot, Dispatcher
 from maxapi.types import MessageCreated
-
-# В зависимости от версии maxapi эти классы могут импортироваться
-# из другого модуля. Если твой текущий код уже с ними работает,
-# оставь свои импорты.
 from maxapi.types import ButtonsPayload, RequestContactButton
 
 
@@ -24,15 +19,13 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
+# ВСТАВЬ СЮДА НОВЫЙ ТОКЕН БОТА
 TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
-# ID администратора, которому разрешена команда /users.
-#
-# Например:
-# ADMIN_IDS = {123456789}
-#
-# Пока можно оставить пустым, но тогда /users будет недоступна.
+
+# MAX user_id администратора
 ADMIN_IDS = {277114915}
 
+# Файл базы данных
 DB_NAME = "users.db"
 
 
@@ -44,10 +37,8 @@ bot = Bot(TOKEN)
 dp = Dispatcher()
 
 
-# Пользователи, которые сейчас находятся на этапе ввода телефона.
-#
+# Пользователи, от которых ждём телефон.
 # Это временное состояние.
-# Основные данные хранятся в SQLite.
 waiting_phone = set()
 
 
@@ -59,9 +50,9 @@ def get_db():
     """
     Открываем соединение с SQLite.
     """
+
     connection = sqlite3.connect(DB_NAME)
 
-    # Чтобы можно было обращаться к колонкам по имени.
     connection.row_factory = sqlite3.Row
 
     return connection
@@ -69,7 +60,7 @@ def get_db():
 
 def init_db():
     """
-    Создаём таблицу пользователей, если её ещё нет.
+    Создаём таблицу пользователей.
     """
 
     with get_db() as db:
@@ -90,7 +81,6 @@ def init_db():
             """
         )
 
-        # Индексы для быстрых поисков.
         db.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_users_user_id
@@ -107,7 +97,9 @@ def init_db():
 
         db.commit()
 
-    logging.info("База данных инициализирована.")
+    logging.info(
+        f"База данных инициализирована: {DB_NAME}"
+    )
 
 
 def get_user(user_id: int):
@@ -126,12 +118,26 @@ def get_user(user_id: int):
             (user_id,)
         )
 
-        return cursor.fetchone()
+        user = cursor.fetchone()
+
+        if user:
+            logging.info(
+                f"Пользователь найден в БД: "
+                f"user_id={user_id}, "
+                f"coupon={user['coupon']}"
+            )
+        else:
+            logging.info(
+                f"Пользователь НЕ найден в БД: "
+                f"user_id={user_id}"
+            )
+
+        return user
 
 
 def get_users_count() -> int:
     """
-    Количество участников.
+    Получаем количество участников.
     """
 
     with get_db() as db:
@@ -143,7 +149,32 @@ def get_users_count() -> int:
             """
         )
 
-        return cursor.fetchone()[0]
+        count = cursor.fetchone()[0]
+
+    logging.info(
+        f"КОЛИЧЕСТВО ПОЛЬЗОВАТЕЛЕЙ В БД: {count}"
+    )
+
+    return count
+
+
+def get_last_user():
+    """
+    Получаем последнего зарегистрированного пользователя.
+    """
+
+    with get_db() as db:
+
+        cursor = db.execute(
+            """
+            SELECT *
+            FROM users
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+
+        return cursor.fetchone()
 
 
 def create_user(
@@ -178,6 +209,13 @@ def create_user(
         )
 
         db.commit()
+
+    logging.info(
+        "ПОЛЬЗОВАТЕЛЬ СОХРАНЁН В БД: "
+        f"user_id={user_id}, "
+        f"phone={phone}, "
+        f"coupon={coupon}"
+    )
 
 
 # =========================================================
@@ -218,7 +256,7 @@ def generate_coupon() -> str:
     """
     Генерируем уникальный купон.
 
-    Например:
+    Пример:
 
     MAX-8K4P7Q
     """
@@ -244,6 +282,11 @@ def generate_coupon() -> str:
             exists = cursor.fetchone()
 
         if not exists:
+
+            logging.info(
+                f"Сгенерирован новый купон: {code}"
+            )
+
             return code
 
 
@@ -253,8 +296,8 @@ def generate_coupon() -> str:
 
 def get_phone_from_event(event):
     """
-    Пытаемся достать номер телефона из контактного
-    вложения MAX.
+    Пытаемся получить номер телефона
+    из контактного вложения MAX.
     """
 
     try:
@@ -268,6 +311,10 @@ def get_phone_from_event(event):
             or []
         )
 
+        logging.info(
+            f"Получены attachments: {attachments}"
+        )
+
         for attachment in attachments:
 
             payload = getattr(
@@ -279,7 +326,9 @@ def get_phone_from_event(event):
             if payload is None:
                 continue
 
-            # Вариант 1 — payload.phone
+            # ---------------------------------------------
+            # Вариант 1: payload.phone
+            # ---------------------------------------------
 
             phone = getattr(
                 payload,
@@ -288,9 +337,17 @@ def get_phone_from_event(event):
             )
 
             if phone:
+
+                logging.info(
+                    f"Телефон найден через payload.phone: "
+                    f"{phone}"
+                )
+
                 return phone
 
-            # Вариант 2 — VCF
+            # ---------------------------------------------
+            # Вариант 2: VCF
+            # ---------------------------------------------
 
             vcf_info = getattr(
                 payload,
@@ -300,6 +357,10 @@ def get_phone_from_event(event):
 
             if vcf_info:
 
+                logging.info(
+                    f"Получен VCF: {vcf_info}"
+                )
+
                 match = re.search(
                     r"TEL[^:]*:([^\r\n]+)",
                     vcf_info,
@@ -307,7 +368,15 @@ def get_phone_from_event(event):
                 )
 
                 if match:
-                    return match.group(1).strip()
+
+                    phone = match.group(1).strip()
+
+                    logging.info(
+                        f"Телефон найден через VCF: "
+                        f"{phone}"
+                    )
+
+                    return phone
 
     except Exception as e:
 
@@ -316,11 +385,15 @@ def get_phone_from_event(event):
             f"из контакта: {e}"
         )
 
+    logging.warning(
+        "Телефон в событии не найден."
+    )
+
     return None
 
 
 # =========================================================
-# выдача купона
+# ОБРАБОТКА ТЕЛЕФОНА
 # =========================================================
 
 async def process_phone(
@@ -331,16 +404,27 @@ async def process_phone(
     """
     Обрабатываем полученный телефон.
 
-    Здесь происходит:
-
-    1. Проверка телефона.
-    2. Проверка существующего пользователя.
-    3. Создание купона.
-    4. Сохранение в БД.
-    5. Отправка купона.
+    1. Проверяем номер.
+    2. Проверяем пользователя.
+    3. Генерируем купон.
+    4. Сохраняем пользователя.
+    5. Отправляем купон.
     """
 
+    logging.info(
+        f"Начинаем обработку телефона: "
+        f"user_id={user_id}, phone={phone}"
+    )
+
+    # -----------------------------------------------------
+    # Проверка телефона
+    # -----------------------------------------------------
+
     if not is_phone(phone):
+
+        logging.warning(
+            f"Некорректный телефон: {phone}"
+        )
 
         await event.message.answer(
             "❌ Не удалось распознать номер телефона.\n\n"
@@ -351,13 +435,21 @@ async def process_phone(
 
     phone = normalize_phone(phone)
 
-    # Пользователь уже существует?
+    logging.info(
+        f"Нормализованный телефон: {phone}"
+    )
+
+    # -----------------------------------------------------
+    # Проверяем пользователя
+    # -----------------------------------------------------
+
     existing_user = get_user(user_id)
 
     if existing_user:
 
         logging.info(
-            f"Пользователь {user_id} уже есть в базе."
+            f"Пользователь уже зарегистрирован: "
+            f"user_id={user_id}"
         )
 
         waiting_phone.discard(user_id)
@@ -372,8 +464,15 @@ async def process_phone(
 
         return
 
-    # Создаём новый купон.
+    # -----------------------------------------------------
+    # Генерируем купон
+    # -----------------------------------------------------
+
     coupon = generate_coupon()
+
+    # -----------------------------------------------------
+    # Сохраняем пользователя
+    # -----------------------------------------------------
 
     try:
 
@@ -383,14 +482,11 @@ async def process_phone(
             coupon=coupon
         )
 
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as e:
 
-        # На случай, если номер уже есть
-        # у другого пользователя.
-
-        logging.warning(
-            f"Попытка повторного использования "
-            f"телефона: {phone}"
+        logging.exception(
+            f"Ошибка сохранения пользователя "
+            f"user_id={user_id}: {e}"
         )
 
         await event.message.answer(
@@ -402,14 +498,34 @@ async def process_phone(
 
         return
 
+    # -----------------------------------------------------
+    # Пользователь успешно создан
+    # -----------------------------------------------------
+
     waiting_phone.discard(user_id)
 
-    logging.info(
-        f"Новый участник: "
-        f"user_id={user_id}, "
-        f"phone={phone}, "
-        f"coupon={coupon}"
-    )
+    # Проверяем, что он реально появился в БД
+    saved_user = get_user(user_id)
+
+    if saved_user:
+
+        logging.info(
+            f"ПРОВЕРКА БД УСПЕШНА: "
+            f"user_id={user_id}, "
+            f"coupon={saved_user['coupon']}"
+        )
+
+    else:
+
+        logging.error(
+            f"КРИТИЧЕСКАЯ ОШИБКА: "
+            f"user_id={user_id} не найден "
+            f"после сохранения!"
+        )
+
+    # -----------------------------------------------------
+    # Отправляем купон
+    # -----------------------------------------------------
 
     await event.message.answer(
         "🎉 Поздравляем! Вы получили новый купон! 🎁\n\n"
@@ -417,6 +533,12 @@ async def process_phone(
         f"🎟 {coupon}\n\n"
         "Покажите это сообщение администратору "
         "или выслите его скриншотом."
+    )
+
+    logging.info(
+        f"КУПОН ВЫДАН: "
+        f"user_id={user_id}, "
+        f"coupon={coupon}"
     )
 
 
@@ -444,13 +566,29 @@ async def messages(event: MessageCreated):
         or ""
     ).strip()
 
-    # -----------------------------------------------------
-    # ADMIN COMMAND /users
-    # -----------------------------------------------------
+    logging.info(
+        f"Сообщение: "
+        f"user_id={user_id}, "
+        f"text={text!r}"
+    )
+
+    # =====================================================
+    # ADMIN: /users
+    # =====================================================
 
     if text.lower() == "/users":
 
+        logging.info(
+            f"Команда /users от user_id={user_id}"
+        )
+
+        # Проверяем администратора
         if user_id not in ADMIN_IDS:
+
+            logging.warning(
+                f"Пользователь {user_id} "
+                f"попытался использовать /users"
+            )
 
             await event.message.answer(
                 "❌ У вас нет доступа к этой команде."
@@ -458,18 +596,74 @@ async def messages(event: MessageCreated):
 
             return
 
+        # Количество
         count = get_users_count()
 
+        # Последний участник
+        last_user = get_last_user()
+
+        if last_user:
+
+            # Форматируем дату
+            created_at = last_user["created_at"]
+
+            try:
+
+                dt = datetime.fromisoformat(
+                    created_at
+                )
+
+                created_at = dt.strftime(
+                    "%d.%m.%Y %H:%M"
+                )
+
+            except Exception:
+
+                pass
+
+            statistics_text = (
+                "👥 СТАТИСТИКА БОТА\n\n"
+
+                f"Всего участников: {count}\n\n"
+
+                "━━━━━━━━━━━━━━━━━━\n\n"
+
+                "👤 ПОСЛЕДНИЙ УЧАСТНИК\n\n"
+
+                f"MAX user_id: "
+                f"{last_user['user_id']}\n"
+
+                f"📱 Телефон: "
+                f"{last_user['phone']}\n"
+
+                f"🎟 Купон: "
+                f"{last_user['coupon']}\n"
+
+                f"📅 Регистрация: "
+                f"{created_at}"
+            )
+
+        else:
+
+            statistics_text = (
+                "👥 СТАТИСТИКА БОТА\n\n"
+                "Всего участников: 0\n\n"
+                "Пока никто не зарегистрирован."
+            )
+
+        logging.info(
+            f"/users: участников в БД = {count}"
+        )
+
         await event.message.answer(
-            "👥 Статистика бота\n\n"
-            f"Всего участников: {count}"
+            statistics_text
         )
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # CONTACT
-    # -----------------------------------------------------
+    # =====================================================
 
     phone = get_phone_from_event(event)
 
@@ -488,13 +682,18 @@ async def messages(event: MessageCreated):
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # ЕСЛИ ЖДЁМ ТЕЛЕФОН
-    # -----------------------------------------------------
+    # =====================================================
 
     if user_id in waiting_phone:
 
         if is_phone(text):
+
+            logging.info(
+                f"Пользователь {user_id} "
+                f"отправил телефон вручную."
+            )
 
             await process_phone(
                 event,
@@ -515,13 +714,13 @@ async def messages(event: MessageCreated):
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # ПЕРВОЕ СООБЩЕНИЕ
-    # -----------------------------------------------------
+    # =====================================================
 
     waiting_phone.add(user_id)
 
-    # Создаём кнопку запроса контакта.
+    # Создаём кнопку запроса контакта
     buttons = ButtonsPayload(
         buttons=[
             [
@@ -561,13 +760,32 @@ async def messages(event: MessageCreated):
 
 async def main():
 
-    # Создаём БД при запуске.
+    # Инициализация базы
     init_db()
 
-    logging.info("Бот запускается...")
+    logging.info(
+        f"Используется база: {DB_NAME}"
+    )
+
+    # Сразу покажем количество пользователей
+    # при запуске.
+    count = get_users_count()
+
+    logging.info(
+        f"При запуске в базе находится "
+        f"{count} участников."
+    )
+
+    logging.info(
+        "Бот запускается..."
+    )
 
     await dp.start_polling(bot)
 
+
+# =========================================================
+# START
+# =========================================================
 
 if __name__ == "__main__":
 
