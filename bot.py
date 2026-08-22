@@ -120,11 +120,7 @@ KARLA_VK = (
 )
 
 KARLA_GOOGLE = (
-    "https://www.google.com/search?q=vr+connect&oq=vr+connect+"
-    "&gs_lcrp=EgZjaHJvbWUyCggAEEUYFhgeGDkyDwgBEC4YJxivARjHARiOBTIGCAIQIxgn"
-    "MgcIAxAAGIAEMggIBBAAGBYYHjIGCAUQRRg8MgYIBhBFGD0yBggHEEUYPdIBCDE1NDNq"
-    "MGo3qAIAsAIA&sourceid=chrome&source=chrome.ob&ie=UTF-8"
-    "#lrd=0x43e139a639bba375:0x6a6865f0dd058151,3,,,,"
+    "https://g.page/r/CVGBBd3wZWhqEBM/review"
 )
 
 
