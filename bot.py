@@ -9,8 +9,11 @@ from datetime import datetime, timezone
 from maxapi import Bot, Dispatcher
 from maxapi.types import (
     MessageCreated,
+    MessageCallback,
     ButtonsPayload,
     RequestContactButton,
+    CallbackButton,
+    LinkButton,
 )
 
 
@@ -44,7 +47,7 @@ ADMIN_USER_ID = 174516690
 
 
 # =========================================================
-# БАЗА
+# DATABASE
 # =========================================================
 
 DB_NAME = "users.db"
@@ -58,12 +61,17 @@ waiting_phone = set()
 
 waiting_location = set()
 
+# user_id -> "karla" / "matrix"
 user_locations = {}
 
 
 # =========================================================
 # ПРИЗЫ
 # =========================================================
+
+# Все призы равновероятны.
+#
+# Дубли убраны.
 
 PRIZES = [
     "1 час игры в VR шлеме",
@@ -76,11 +84,14 @@ PRIZES = [
 
     "1 час в VR шлеме, при аренде от 1 часа VR шлема",
 
-    "1 час игр на консоли (XBox / PS5), при аренде от 1 часа VR шлема",
+    "1 час игр на консоли (XBox / PS5), "
+    "при аренде от 1 часа VR шлема",
 
-    "15 минут игр на VR Автосимуляторе, при аренде 15 минут на Автосимуляторе",
+    "15 минут игр на VR Автосимуляторе, "
+    "при аренде 15 минут на Автосимуляторе",
 
-    "30 минут игры на консоли (XBox / PS5), при аренде от 1 часа VR шлема",
+    "30 минут игры на консоли (XBox / PS5), "
+    "при аренде от 1 часа VR шлема",
 
     "Бонус 500 ₽ при покупке сертификата от 1000 ₽",
 
@@ -90,16 +101,18 @@ PRIZES = [
 
     "Скидка 300 ₽ на второй час аренды VR шлема",
 
-    "1 час игр на консоли (XBox / PS5), при аренде от 1 часа аренды консоли",
+    "1 час игр на консоли (XBox / PS5), "
+    "при аренде от 1 часа аренды консоли",
 
     "2 часа игры в VR",
 
-    "15 минут игр на автосимуляторе, при аренде от 1 часа VR шлема",
+    "15 минут игр на автосимуляторе, "
+    "при аренде от 1 часа VR шлема",
 ]
 
 
 # =========================================================
-# ФИЛИАЛЫ И ССЫЛКИ
+# ФИЛИАЛЫ
 # =========================================================
 
 LOCATIONS = {
@@ -185,14 +198,22 @@ dp = Dispatcher()
 # =========================================================
 
 def get_db():
-    connection = sqlite3.connect(DB_NAME)
+
+    connection = sqlite3.connect(
+        DB_NAME
+    )
 
     connection.row_factory = sqlite3.Row
 
     return connection
 
 
-def add_column_if_missing(db, table, column, definition):
+def add_column_if_missing(
+    db,
+    table,
+    column,
+    definition
+):
 
     columns = db.execute(
         f"PRAGMA table_info({table})"
@@ -213,7 +234,8 @@ def add_column_if_missing(db, table, column, definition):
         )
 
         logging.info(
-            f"Добавлена колонка {column} в таблицу {table}"
+            "Добавлена колонка %s",
+            column
         )
 
 
@@ -224,6 +246,7 @@ def init_db():
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
+
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
 
                 user_id INTEGER NOT NULL,
@@ -240,11 +263,6 @@ def init_db():
             )
             """
         )
-
-        # -------------------------------------------------
-        # Если база была создана старой версией,
-        # добавляем недостающие поля.
-        # -------------------------------------------------
 
         add_column_if_missing(
             db,
@@ -266,10 +284,6 @@ def init_db():
             "expires_at",
             "TEXT"
         )
-
-        # -------------------------------------------------
-        # Индексы
-        # -------------------------------------------------
 
         db.execute(
             """
@@ -293,7 +307,7 @@ def init_db():
 
 
 # =========================================================
-# ПОЛЬЗОВАТЕЛИ
+# DATABASE — ПОЛЬЗОВАТЕЛИ
 # =========================================================
 
 def get_user(user_id):
@@ -364,7 +378,7 @@ def get_users_count():
 
 
 # =========================================================
-# КУПОНЫ
+# НОМЕР КУПОНА
 # =========================================================
 
 def get_next_coupon_number():
@@ -377,6 +391,9 @@ def get_next_coupon_number():
             FROM users
             """
         ).fetchall()
+
+    # До этого было выдано 01267.
+    # Следующий должен быть 01268.
 
     max_number = 1267
 
@@ -418,7 +435,7 @@ def generate_coupon():
 
 
 # =========================================================
-# СРОК ДЕЙСТВИЯ
+# ДАТА + 1 МЕСЯЦ
 # =========================================================
 
 def add_one_month(dt):
@@ -427,7 +444,7 @@ def add_one_month(dt):
 
     month = dt.month + 1
 
-    if month == 13:
+    if month > 12:
 
         month = 1
 
@@ -515,14 +532,20 @@ def normalize_phone(phone):
         digits.startswith("8")
         and len(digits) == 11
     ):
-        digits = "7" + digits[1:]
+
+        digits = (
+            "7"
+            + digits[1:]
+        )
 
     return digits
 
 
 def is_phone(phone):
 
-    digits = normalize_phone(phone)
+    digits = normalize_phone(
+        phone
+    )
 
     return (
         len(digits) == 11
@@ -565,7 +588,6 @@ def get_phone_from_event(event):
             )
 
             if phone:
-
                 return phone
 
             vcf_info = getattr(
@@ -584,10 +606,7 @@ def get_phone_from_event(event):
 
                 if match:
 
-                    return (
-                        match.group(1)
-                        .strip()
-                    )
+                    return match.group(1).strip()
 
     except Exception as e:
 
@@ -605,24 +624,24 @@ def get_phone_from_event(event):
 
 def make_location_buttons():
 
-    return ButtonsPayload(
+    buttons = ButtonsPayload(
         buttons=[
             [
-                {
-                    "type": "callback",
-                    "text": "1️⃣ Карла Маркса",
-                    "payload": "location_karla"
-                }
+                CallbackButton(
+                    text="1️⃣ Карла Маркса",
+                    payload="location_karla"
+                )
             ],
             [
-                {
-                    "type": "callback",
-                    "text": "2️⃣ ТРЦ Матрица",
-                    "payload": "location_matrix"
-                }
+                CallbackButton(
+                    text="2️⃣ ТРЦ Матрица",
+                    payload="location_matrix"
+                )
             ]
         ]
-    ).pack()
+    )
+
+    return buttons.pack()
 
 
 # =========================================================
@@ -633,91 +652,95 @@ def make_review_buttons(location):
 
     data = LOCATIONS[location]
 
-    return ButtonsPayload(
+    buttons = ButtonsPayload(
         buttons=[
             [
-                {
-                    "type": "link",
-                    "text": "⭐ Яндекс",
-                    "url": data["yandex"]
-                }
+                LinkButton(
+                    text="⭐ Яндекс",
+                    url=data["yandex"]
+                )
             ],
             [
-                {
-                    "type": "link",
-                    "text": "⭐ 2GIS",
-                    "url": data["2gis"]
-                }
+                LinkButton(
+                    text="⭐ 2GIS",
+                    url=data["2gis"]
+                )
             ],
             [
-                {
-                    "type": "link",
-                    "text": "⭐ VK",
-                    "url": data["vk"]
-                }
+                LinkButton(
+                    text="⭐ VK",
+                    url=data["vk"]
+                )
             ],
             [
-                {
-                    "type": "link",
-                    "text": "⭐ Google",
-                    "url": data["google"]
-                }
+                LinkButton(
+                    text="⭐ Google",
+                    url=data["google"]
+                )
             ],
             [
-                {
-                    "type": "callback",
-                    "text": "📸 Как подтвердить отзыв?",
-                    "payload": "review_help"
-                }
+                CallbackButton(
+                    text="📸 Как подтвердить отзыв?",
+                    payload="review_help"
+                )
             ],
             [
-                {
-                    "type": "link",
-                    "text": "👨‍💼 Написать администратору",
-                    "url": f"max://user/{ADMIN_USER_ID}"
-                }
+                LinkButton(
+                    text="👨‍💼 Написать администратору",
+                    url=f"max://user/{ADMIN_USER_ID}"
+                )
             ]
         ]
-    ).pack()
+    )
+
+    return buttons.pack()
 
 
 # =========================================================
-# КНОПКИ — ПОСЛЕ ИНСТРУКЦИИ
+# КНОПКИ — ПОМОЩЬ
 # =========================================================
 
 def make_review_help_buttons():
 
-    return ButtonsPayload(
+    buttons = ButtonsPayload(
         buttons=[
             [
-                {
-                    "type": "link",
-                    "text": "👨‍💼 Отправить скриншот",
-                    "url": f"max://user/{ADMIN_USER_ID}"
-                }
+                LinkButton(
+                    text="👨‍💼 Отправить скриншот",
+                    url=f"max://user/{ADMIN_USER_ID}"
+                )
             ],
             [
-                {
-                    "type": "callback",
-                    "text": "⬅️ Вернуться к площадкам",
-                    "payload": "back_reviews"
-                }
+                CallbackButton(
+                    text="⬅️ Вернуться к площадкам",
+                    payload="back_reviews"
+                )
             ]
         ]
-    ).pack()
+    )
+
+    return buttons.pack()
 
 
 # =========================================================
-# ПОКАЗЫВАЕМ ФИЛИАЛ
+# МЕНЮ ФИЛИАЛА
 # =========================================================
 
-async def show_location_menu(event, user_id):
+async def show_location_menu(
+    event,
+    user_id
+):
 
-    waiting_location.add(user_id)
+    waiting_location.add(
+        user_id
+    )
 
     await event.message.answer(
-        "📍 Где вы отдыхали?\n\n"
-        "Выберите филиал, который вы посещали:",
+        text=(
+            "📍 Где вы отдыхали?\n\n"
+
+            "Выберите филиал, который вы посещали:"
+        ),
         attachments=[
             make_location_buttons()
         ]
@@ -725,14 +748,19 @@ async def show_location_menu(event, user_id):
 
 
 # =========================================================
-# ПОКАЗЫВАЕМ ОТЗЫВЫ
+# МЕНЮ ОТЗЫВОВ
 # =========================================================
 
-async def show_review_menu(event, user_id):
+async def show_review_menu(
+    event,
+    user_id
+):
 
-    location = user_locations.get(user_id)
+    location = user_locations.get(
+        user_id
+    )
 
-    if not location:
+    if location is None:
 
         await show_location_menu(
             event,
@@ -746,20 +774,27 @@ async def show_review_menu(event, user_id):
     ]["name"]
 
     await event.message.answer(
-        f"⭐ Отзыв — {location_name}\n\n"
+        text=(
+            f"⭐ Отзывы — {location_name}\n\n"
 
-        "Оставьте отзыв на одной из площадок ниже.\n\n"
+            "Выберите площадку, на которой "
+            "хотите оставить отзыв:\n\n"
 
-        "📸 ВАЖНО!\n\n"
+            "📸 ВАЖНО!\n\n"
 
-        "Чтобы подтвердить отзыв и получить "
-        "возможность испытать удачу в барабане 🎰, "
-        "после публикации отзыва сделайте скриншот "
-        "и отправьте его администратору.\n\n"
+            "После публикации отзыва обязательно "
+            "сделайте скриншот и отправьте его "
+            "администратору.\n\n"
 
-        "Выберите площадку:",
+            "Это необходимо для подтверждения "
+            "отзыва и получения крутки барабана. 🎰\n\n"
+
+            "Выберите площадку:"
+        ),
         attachments=[
-            make_review_buttons(location)
+            make_review_buttons(
+                location
+            )
         ]
     )
 
@@ -783,20 +818,21 @@ async def process_phone(
 
         return
 
-    phone = normalize_phone(phone)
-
-    # =====================================================
-    # ВАЖНО:
-    #
-    # Если этот номер уже есть в базе,
-    # НОВЫЙ купон НЕ создаём.
-    # =====================================================
-
-    existing_by_phone = get_user_by_phone(
+    phone = normalize_phone(
         phone
     )
 
-    if existing_by_phone:
+    # =====================================================
+    # ЭТОТ НОМЕР УЖЕ ИСПОЛЬЗОВАЛСЯ?
+    #
+    # Тогда новый купон НЕ создаём.
+    # =====================================================
+
+    existing = get_user_by_phone(
+        phone
+    )
+
+    if existing:
 
         waiting_phone.discard(
             user_id
@@ -806,10 +842,10 @@ async def process_phone(
             "🎟 Этот номер телефона уже "
             "использовался для получения купона.\n\n"
 
-            f"Ваш купон №{existing_by_phone['coupon']}\n\n"
+            f"Ваш купон №{existing['coupon']}\n\n"
 
             f"🎁 Приз:\n"
-            f"{existing_by_phone['prize'] or 'Информация отсутствует'}\n\n"
+            f"{existing['prize'] or 'не указан'}\n\n"
 
             "Новый купон по этому номеру "
             "создаваться не будет."
@@ -823,7 +859,7 @@ async def process_phone(
         return
 
     # =====================================================
-    # НОВЫЙ КЛИЕНТ
+    # НОВЫЙ КУПОН
     # =====================================================
 
     prize = random.choice(
@@ -841,7 +877,7 @@ async def process_phone(
     except sqlite3.IntegrityError as e:
 
         logging.exception(
-            "Ошибка при создании купона: %s",
+            "Ошибка создания купона: %s",
             e
         )
 
@@ -861,35 +897,35 @@ async def process_phone(
     )
 
     logging.info(
-        "Новый участник: "
-        "user_id=%s, phone=%s, coupon=%s, prize=%s",
+        "Новый купон: user_id=%s coupon=%s prize=%s",
         user_id,
-        phone,
         coupon,
         prize
     )
 
     # =====================================================
-    # КУПОН
+    # ВЫДАЁМ КУПОН
     # =====================================================
 
     await event.message.answer(
-        "🎉 ПОЗДРАВЛЯЕМ!\n\n"
+        text=(
+            "🎉 ПОЗДРАВЛЯЕМ!\n\n"
 
-        f"🎟 Ваш купон №{coupon}\n\n"
+            f"🎟 Ваш купон №{coupon}\n\n"
 
-        f"🎁 Ваш приз:\n"
-        f"{prize}\n\n"
+            f"🎁 Ваш приз:\n"
+            f"{prize}\n\n"
 
-        f"⏳ Купон действует до "
-        f"{expires_text}.\n\n"
+            f"⏳ Купон действует до "
+            f"{expires_text}.\n\n"
 
-        "Сохраните это сообщение "
-        "или сделайте скриншот."
+            "Сохраните это сообщение "
+            "или сделайте скриншот."
+        )
     )
 
     # =====================================================
-    # ФИЛИАЛ
+    # СПРАШИВАЕМ ФИЛИАЛ
     # =====================================================
 
     await show_location_menu(
@@ -903,7 +939,9 @@ async def process_phone(
 # =========================================================
 
 @dp.message_created()
-async def messages(event: MessageCreated):
+async def messages(
+    event: MessageCreated
+):
 
     user = event.message.sender
 
@@ -919,7 +957,7 @@ async def messages(event: MessageCreated):
     ).strip()
 
     logging.info(
-        "Сообщение от user_id=%s: %s",
+        "MESSAGE: user_id=%s text=%r",
         user_id,
         text
     )
@@ -948,7 +986,7 @@ async def messages(event: MessageCreated):
         return
 
     # =====================================================
-    # CONTACT
+    # КОНТАКТ
     # =====================================================
 
     phone = get_phone_from_event(
@@ -958,7 +996,7 @@ async def messages(event: MessageCreated):
     if phone:
 
         logging.info(
-            "Получен телефон от user_id=%s: %s",
+            "PHONE: user_id=%s phone=%s",
             user_id,
             phone
         )
@@ -972,7 +1010,7 @@ async def messages(event: MessageCreated):
         return
 
     # =====================================================
-    # ОЖИДАЕМ ТЕЛЕФОН
+    # ЖДЁМ ТЕЛЕФОН
     # =====================================================
 
     if user_id in waiting_phone:
@@ -989,9 +1027,11 @@ async def messages(event: MessageCreated):
 
             await event.message.answer(
                 "❌ Это не похоже на номер телефона.\n\n"
+
                 "Нажмите кнопку "
                 "«📱 Поделиться номером» "
                 "или отправьте номер вручную.\n\n"
+
                 "Например:\n"
                 "89991234567"
             )
@@ -999,14 +1039,14 @@ async def messages(event: MessageCreated):
         return
 
     # =====================================================
-    # ОЖИДАЕМ ФИЛИАЛ
+    # ЕСЛИ ЖДЁМ ФИЛИАЛ
     # =====================================================
 
     if user_id in waiting_location:
 
         await event.message.answer(
             "📍 Пожалуйста, выберите филиал "
-            "кнопкой выше."
+            "одной из кнопок выше."
         )
 
         return
@@ -1059,247 +1099,166 @@ async def messages(event: MessageCreated):
 
 
 # =========================================================
-# CALLBACK — КНОПКИ
+# CALLBACK
 # =========================================================
 
 @dp.message_callback()
-async def callbacks(event):
+async def callbacks(
+    event: MessageCallback
+):
 
-    # -----------------------------------------------------
-    # Получаем payload кнопки
-    # -----------------------------------------------------
+    try:
 
-    callback = getattr(
-        event,
-        "callback",
-        None
-    )
+        # =================================================
+        # PAYLOAD
+        # =================================================
 
-    payload = None
+        payload = event.callback.payload
 
-    if callback is not None:
+        # =================================================
+        # USER ID
+        # =================================================
 
-        payload = getattr(
-            callback,
-            "payload",
-            None
-        )
-
-    # На некоторых версиях maxapi payload может быть
-    # доступен непосредственно через event.
-
-    if payload is None:
-
-        payload = getattr(
-            event,
-            "payload",
-            None
-        )
-
-    # -----------------------------------------------------
-    # Получаем пользователя,
-    # который нажал кнопку
-    # -----------------------------------------------------
-
-    user_id = None
-
-    if callback is not None:
-
-        callback_user = getattr(
-            callback,
-            "user",
-            None
-        )
-
-        if callback_user is not None:
-
-            user_id = getattr(
-                callback_user,
-                "user_id",
-                None
-            )
-
-    if user_id is None:
-
-        user = getattr(
-            event,
-            "user",
-            None
-        )
-
-        if user is not None:
-
-            user_id = getattr(
-                user,
-                "user_id",
-                None
-            )
-
-    logging.info(
-        "CALLBACK: user_id=%s payload=%s",
-        user_id,
-        payload
-    )
-
-    if user_id is None:
-
-        logging.warning(
-            "Не удалось определить user_id callback."
-        )
-
-        return
-
-    if payload is None:
-
-        logging.warning(
-            "Пустой callback payload."
-        )
-
-        return
-
-    payload = str(
-        payload
-    )
-
-    # =====================================================
-    # КАРЛА МАРКСА
-    # =====================================================
-
-    if payload == "location_karla":
-
-        user_locations[
-            user_id
-        ] = "karla"
-
-        waiting_location.discard(
-            user_id
-        )
+        user_id = event.callback.user.user_id
 
         logging.info(
-            "user_id=%s выбрал Карла Маркса",
-            user_id
+            "CALLBACK: user_id=%s payload=%r",
+            user_id,
+            payload
         )
 
-        # Получаем message из callback event.
-        message = getattr(
-            event,
-            "message",
-            None
-        )
+        # =================================================
+        # СРАЗУ ПОДТВЕРЖДАЕМ НАЖАТИЕ
+        # =================================================
 
-        if message is not None:
+        try:
 
-            await show_review_menu(
-                message,
+            await event.answer()
+
+        except Exception as e:
+
+            logging.warning(
+                "Не удалось подтвердить callback: %s",
+                e
+            )
+
+        # =================================================
+        # КАРЛА МАРКСА
+        # =================================================
+
+        if payload == "location_karla":
+
+            user_locations[
+                user_id
+            ] = "karla"
+
+            waiting_location.discard(
                 user_id
             )
 
-        return
-
-    # =====================================================
-    # МАТРИЦА
-    # =====================================================
-
-    if payload == "location_matrix":
-
-        user_locations[
-            user_id
-        ] = "matrix"
-
-        waiting_location.discard(
-            user_id
-        )
-
-        logging.info(
-            "user_id=%s выбрал ТРЦ Матрица",
-            user_id
-        )
-
-        message = getattr(
-            event,
-            "message",
-            None
-        )
-
-        if message is not None:
-
-            await show_review_menu(
-                message,
+            logging.info(
+                "Выбран филиал Карла Маркса: %s",
                 user_id
             )
 
-        return
+            await show_review_menu(
+                event,
+                user_id
+            )
 
-    # =====================================================
-    # ПОМОЩЬ
-    # =====================================================
+            return
 
-    if payload == "review_help":
+        # =================================================
+        # ТРЦ МАТРИЦА
+        # =================================================
 
-        message = getattr(
-            event,
-            "message",
-            None
-        )
+        if payload == "location_matrix":
 
-        if message is not None:
+            user_locations[
+                user_id
+            ] = "matrix"
 
-            await message.answer(
-                "📸 КАК ПОДТВЕРДИТЬ ОТЗЫВ?\n\n"
+            waiting_location.discard(
+                user_id
+            )
 
-                "1️⃣ Выберите любую площадку выше.\n\n"
+            logging.info(
+                "Выбран филиал ТРЦ Матрица: %s",
+                user_id
+            )
 
-                "2️⃣ Оставьте отзыв о вашем посещении.\n\n"
+            await show_review_menu(
+                event,
+                user_id
+            )
 
-                "3️⃣ После публикации сделайте "
-                "скриншот опубликованного отзыва.\n\n"
+            return
 
-                "4️⃣ Нажмите кнопку "
-                "«Отправить скриншот».\n\n"
+        # =================================================
+        # ПОМОЩЬ
+        # =================================================
 
-                "5️⃣ Отправьте скриншот администратору.\n\n"
+        if payload == "review_help":
 
-                "✅ Администратор проверит отзыв "
-                "и подтвердит вашу крутку.\n\n"
+            await event.message.answer(
+                text=(
+                    "📸 КАК ПОДТВЕРДИТЬ ОТЗЫВ?\n\n"
 
-                "🎰 Один подтверждённый отзыв = "
-                "одна крутка.\n\n"
+                    "1️⃣ Выберите площадку — "
+                    "Яндекс, 2GIS, VK или Google.\n\n"
 
-                "Если вы оставили отзывы "
-                "на нескольких площадках — "
-                "отправьте скриншот каждого отзыва.",
+                    "2️⃣ Оставьте отзыв о вашем посещении.\n\n"
+
+                    "3️⃣ После публикации сделайте "
+                    "скриншот отзыва.\n\n"
+
+                    "4️⃣ Нажмите "
+                    "«👨‍💼 Отправить скриншот».\n\n"
+
+                    "5️⃣ Отправьте скриншот "
+                    "администратору.\n\n"
+
+                    "✅ Администратор проверит отзыв.\n\n"
+
+                    "🎰 После подтверждения отзыва "
+                    "вы получите одну крутку "
+                    "барабана призов."
+                ),
                 attachments=[
                     make_review_help_buttons()
                 ]
             )
 
-        return
+            return
 
-    # =====================================================
-    # НАЗАД
-    # =====================================================
+        # =================================================
+        # НАЗАД
+        # =================================================
 
-    if payload == "back_reviews":
-
-        message = getattr(
-            event,
-            "message",
-            None
-        )
-
-        if message is not None:
+        if payload == "back_reviews":
 
             await show_review_menu(
-                message,
+                event,
                 user_id
             )
 
-        return
+            return
 
-    logging.info(
-        "Неизвестный callback payload: %s",
-        payload
-    )
+        # =================================================
+        # НЕИЗВЕСТНЫЙ CALLBACK
+        # =================================================
+
+        logging.warning(
+            "НЕИЗВЕСТНЫЙ CALLBACK: %r",
+            payload
+        )
+
+    except Exception as e:
+
+        logging.exception(
+            "ОШИБКА CALLBACK: %s",
+            e
+        )
 
 
 # =========================================================
@@ -1308,19 +1267,11 @@ async def callbacks(event):
 
 async def main():
 
-    # -----------------------------------------------------
-    # Создаём / проверяем БД
-    # -----------------------------------------------------
-
     init_db()
 
     logging.info(
         "Бот запускается..."
     )
-
-    # -----------------------------------------------------
-    # Запускаем polling
-    # -----------------------------------------------------
 
     await dp.start_polling(
         bot
