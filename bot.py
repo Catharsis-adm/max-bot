@@ -111,7 +111,8 @@ KARLA_YANDEX = (
 )
 
 KARLA_2GIS = (
-    "https://2gis.ru/izhevsk/firm/70000001050199074/"
+    "https://2gis.ru/reviews/70000001050199074/addReview"
+    "?utm_source=lk"
 )
 
 KARLA_VK = (
