@@ -26,7 +26,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-TOKEN = "ВСТАВЬ_СЮДА_НОВЫЙ_ТОКЕН"
+TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
 
 DB_NAME = "users.db"
 
