@@ -135,15 +135,16 @@ MATRICA_YANDEX = (
 )
 
 MATRICA_2GIS = (
-    "https://2gis.ru/izhevsk/search/vr-%D0%B0%D1%80%D0%B5%D0%BD%D0%B0"
-    "%20Connect/firm/70000001114081013/"
+    "https://2gis.ru/reviews/70000001114081013/addReview?utm_source=lk"
 )
 
 MATRICA_VK = (
     "https://vk.ru/reviews-202166323"
 )
 
-MATRICA_GOOGLE = KARLA_GOOGLE
+MATRICA_GOOGLE = (
+    "https://g.page/r/CTkdqTcLtOo-EBM/review"
+)
 
 
 # =========================================================
