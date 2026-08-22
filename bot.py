@@ -1,58 +1,67 @@
 import asyncio
 import logging
 import re
-import secrets
 import sqlite3
 from datetime import datetime, timezone
-from calendar import monthrange
+from dateutil.relativedelta import relativedelta
 
 from maxapi import Bot, Dispatcher
-from maxapi.types import (
-    MessageCreated,
-    ButtonsPayload,
-    RequestContactButton,
-)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
+from maxapi.types import MessageCreated
+from maxapi.types import ButtonsPayload, RequestContactButton
 
 
 # =========================================================
 # НАСТРОЙКИ
 # =========================================================
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+# =========================================================
+# ТОКЕН БОТА
+# =========================================================
+
 TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
 
-DB_NAME = "users.db"
+# =========================================================
+# АДМИНИСТРАТОРЫ
+# =========================================================
 
-# Твой MAX user_id
 ADMIN_IDS = {
     277114915
 }
 
-# MAX ID администратора
+# MAX ID администратора,
+# которому пользователь может написать.
 ADMIN_USER_ID = 174516690
 
-# Последний номер, который уже был выдан ДО этого бота.
-# Следующий будет 01268.
-INITIAL_COUPON_NUMBER = 1267
-
-
 # =========================================================
-# БОТ
+# БАЗА
 # =========================================================
 
-bot = Bot(TOKEN)
-dp = Dispatcher()
-
+DB_NAME = "users.db"
 
 # =========================================================
-# ВРЕМЕННЫЕ СОСТОЯНИЯ
+# СОСТОЯНИЯ ПОЛЬЗОВАТЕЛЕЙ
 # =========================================================
 
+# Пользователь сейчас должен указать телефон.
 waiting_phone = set()
+
+# Пользователь должен выбрать филиал.
+waiting_location = set()
+
+# Пользователь уже выбрал филиал.
+# Формат:
+# {
+#     user_id: "karla"
+# }
+user_locations = {}
+
+# Пользователь сейчас находится в меню отзывов.
+review_menu_users = set()
 
 
 # =========================================================
@@ -93,50 +102,84 @@ PRIZES = [
 
 
 # =========================================================
-# ССЫЛКИ
+# ССЫЛКИ НА ОТЗЫВЫ
 # =========================================================
 
-KARLA_YANDEX = (
-    "https://yandex.ru/maps/org/vr_connect/18951109146/"
-    "?add-review=true&ll=53.201618%2C56.859488&z=16"
-)
+LOCATIONS = {
 
-KARLA_2GIS = (
-    "https://2gis.ru/izhevsk/firm/70000001050199074/"
-    "tab/reviews/addreview?m=53.201516%2C56.85975%2F16"
-)
+    "karla": {
+        "name": "Карла Маркса",
 
-KARLA_VK = (
-    "https://vk.ru/reviews-202166323"
-)
+        "yandex": (
+            "https://yandex.ru/maps/org/vr_connect/"
+            "18951109146/?add-review=true&"
+            "ll=53.201618%2C56.859488&z=16"
+        ),
 
-KARLA_GOOGLE = (
-    "https://www.google.com/search?q=vr+connect&oq=vr+connect+"
-    "&gs_lcrp=EgZjaHJvbWUyCggAEEUYFhgeGDkyDwgBEC4YJxivARjHARiOBTIGCAIQIxgn"
-    "MgcIAxAAGIAEMggIBBAAGBYYHjIGCAUQRRg8MgYIBhBFGD0yBggHEEUYPdIBCDE1NDNq"
-    "MGo3qAIAsAIA&sourceid=chrome&source=chrome.ob&ie=UTF-8"
-    "#lrd=0x43e139a639bba375:0x6a6865f0dd058151,3,,,,"
-)
+        "2gis": (
+            "https://2gis.ru/izhevsk/firm/"
+            "70000001050199074/tab/reviews/addreview?"
+            "m=53.201516%2C56.85975%2F16"
+        ),
+
+        "vk": (
+            "https://vk.ru/reviews-202166323"
+        ),
+
+        "google": (
+            "https://www.google.com/search?"
+            "q=vr+connect&oq=vr+connect+&"
+            "gs_lcrp=EgZjaHJvbWUyCggAEEUYFhgeGDky"
+            "DwgBEC4YJxivARjHARiOBTIGCAIQIxgnMgcIAxAAGIAEM"
+            "ggIBBAAGBYYHjIGCAUQRRg8MgYIBhBFGD0yBggHEEUYPdIBC"
+            "DE1NDNqMGo3qAIAsAIA&sourceid=chrome&"
+            "source=chrome.ob&ie=UTF-8#lrd=0x43e139a639bba375:"
+            "0x6a6865f0dd058151,3,,,,"
+        ),
+    },
+
+    "matrix": {
+        "name": "ТРЦ Матрица",
+
+        "yandex": (
+            "https://yandex.ru/maps/org/vr_connect/"
+            "36851840813/reviews/?add-review=true&"
+            "indoorLevel=1&ll=53.124389%2C56.832935&"
+            "tab=reviews&z=16.98"
+        ),
+
+        "2gis": (
+            "https://2gis.ru/izhevsk/search/"
+            "vr-%D0%B0%D1%80%D0%B5%D0%BD%D0%B0%20Connect/"
+            "firm/70000001114081013/"
+            "53.125482%2C56.832989/tab/reviews/"
+            "addreview?m=53.163537%2C56.846359%2F14.26"
+        ),
+
+        "vk": (
+            "https://vk.ru/reviews-202166323"
+        ),
+
+        "google": (
+            "https://www.google.com/search?"
+            "q=vr+connect&oq=vr+connect+&"
+            "gs_lcrp=EgZjaHJvbWUyCggAEEUYFhgeGDky"
+            "DwgBEC4YJxivARjHARiOBTIGCAIQIxgnMgcIAxAAGIAEM"
+            "ggIBBAAGBYYHjIGCAUQRRg8MgYIBhBFGD0yBggHEEUYPdIBC"
+            "DE1NDNqMGo3qAIAsAIA&sourceid=chrome&"
+            "source=chrome.ob&ie=UTF-8#lrd=0x43e139a639bba375:"
+            "0x6a6865f0dd058151,3,,,,"
+        ),
+    }
+}
 
 
-MATRICA_YANDEX = (
-    "https://yandex.ru/maps/org/vr_connect/36851840813/"
-    "reviews/?add-review=true&indoorLevel=1"
-    "&ll=53.124389%2C56.832935&tab=reviews&z=16.98"
-)
+# =========================================================
+# БОТ
+# =========================================================
 
-MATRICA_2GIS = (
-    "https://2gis.ru/izhevsk/search/vr-%D0%B0%D1%80%D0%B5%D0%BD%D0%B0"
-    "%20Connect/firm/70000001114081013/"
-    "53.125482%2C56.832989/tab/reviews/addreview"
-    "?m=53.163537%2C56.846359%2F14.26"
-)
-
-MATRICA_VK = (
-    "https://vk.ru/reviews-202166323"
-)
-
-MATRICA_GOOGLE = KARLA_GOOGLE
+bot = Bot(TOKEN)
+dp = Dispatcher()
 
 
 # =========================================================
@@ -144,113 +187,34 @@ MATRICA_GOOGLE = KARLA_GOOGLE
 # =========================================================
 
 def get_db():
-    db = sqlite3.connect(DB_NAME)
-    db.row_factory = sqlite3.Row
-    return db
+    connection = sqlite3.connect(DB_NAME)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
 def init_db():
 
     with get_db() as db:
 
-        # -------------------------------------------------
-        # Пользователи
-        # -------------------------------------------------
-
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL UNIQUE,
-                phone TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL,
-                location TEXT
-            )
-            """
-        )
-
-        # -------------------------------------------------
-        # Если база была создана старой версией
-        # -------------------------------------------------
-
-        columns = db.execute(
-            "PRAGMA table_info(users)"
-        ).fetchall()
-
-        column_names = {
-            row["name"]
-            for row in columns
-        }
-
-        if "location" not in column_names:
-
-            db.execute(
-                """
-                ALTER TABLE users
-                ADD COLUMN location TEXT
-                """
-            )
-
-        # -------------------------------------------------
-        # Купоны
-        # -------------------------------------------------
-
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS coupons (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-                coupon_number INTEGER NOT NULL UNIQUE,
 
                 user_id INTEGER NOT NULL,
+
+                phone TEXT NOT NULL,
+
+                coupon TEXT NOT NULL UNIQUE,
 
                 prize TEXT NOT NULL,
 
                 created_at TEXT NOT NULL,
 
-                expires_at TEXT NOT NULL,
-
-                status TEXT NOT NULL DEFAULT 'active'
+                expires_at TEXT NOT NULL
             )
             """
         )
-
-        # -------------------------------------------------
-        # Счётчик купонов
-        # -------------------------------------------------
-
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS coupon_counter (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-
-                current_number INTEGER NOT NULL
-            )
-            """
-        )
-
-        counter = db.execute(
-            """
-            SELECT current_number
-            FROM coupon_counter
-            WHERE id = 1
-            """
-        ).fetchone()
-
-        if counter is None:
-
-            db.execute(
-                """
-                INSERT INTO coupon_counter (
-                    id,
-                    current_number
-                )
-                VALUES (1, ?)
-                """,
-                (
-                    INITIAL_COUPON_NUMBER,
-                )
-            )
 
         db.execute(
             """
@@ -266,138 +230,80 @@ def init_db():
             """
         )
 
-        db.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_coupons_user_id
-            ON coupons(user_id)
-            """
-        )
-
         db.commit()
 
     logging.info("База данных инициализирована.")
 
 
 # =========================================================
-# USERS
+# ПОЛЬЗОВАТЕЛИ
 # =========================================================
 
-def get_user(user_id):
+def get_user(user_id: int):
 
     with get_db() as db:
 
-        return db.execute(
+        cursor = db.execute(
             """
             SELECT *
             FROM users
             WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 1
             """,
             (user_id,)
-        ).fetchone()
+        )
+
+        return cursor.fetchone()
 
 
-def get_user_by_phone(phone):
+def get_user_by_phone(phone: str):
 
     with get_db() as db:
 
-        return db.execute(
+        cursor = db.execute(
             """
             SELECT *
             FROM users
             WHERE phone = ?
+            ORDER BY id DESC
+            LIMIT 1
             """,
             (phone,)
-        ).fetchone()
+        )
+
+        return cursor.fetchone()
 
 
-def get_users_count():
+def get_users_count() -> int:
 
     with get_db() as db:
 
-        return db.execute(
+        cursor = db.execute(
             """
-            SELECT COUNT(*)
+            SELECT COUNT(DISTINCT user_id)
             FROM users
             """
-        ).fetchone()[0]
-
-
-def create_user(user_id, phone):
-
-    created_at = datetime.now(
-        timezone.utc
-    ).isoformat()
-
-    with get_db() as db:
-
-        db.execute(
-            """
-            INSERT INTO users (
-                user_id,
-                phone,
-                created_at,
-                location
-            )
-            VALUES (?, ?, ?, NULL)
-            """,
-            (
-                user_id,
-                phone,
-                created_at
-            )
         )
 
-        db.commit()
+        return cursor.fetchone()[0]
 
 
-def save_location(user_id, location):
+def get_user_coupons(user_id: int):
 
     with get_db() as db:
 
-        db.execute(
+        cursor = db.execute(
             """
-            UPDATE users
-            SET location = ?
+            SELECT *
+            FROM users
             WHERE user_id = ?
+            ORDER BY id ASC
             """,
-            (
-                location,
-                user_id
-            )
+            (user_id,)
         )
 
-        db.commit()
-
-
-# =========================================================
-# ТЕЛЕФОН
-# =========================================================
-
-def normalize_phone(phone):
-
-    digits = re.sub(
-        r"\D",
-        "",
-        phone
-    )
-
-    if (
-        len(digits) == 11
-        and digits.startswith("8")
-    ):
-        digits = "7" + digits[1:]
-
-    return digits
-
-
-def is_phone(phone):
-
-    digits = normalize_phone(phone)
-
-    return (
-        len(digits) == 11
-        and digits.startswith("7")
-    )
+        return cursor.fetchall()
 
 
 # =========================================================
@@ -408,123 +314,74 @@ def get_next_coupon_number():
 
     with get_db() as db:
 
-        row = db.execute(
+        cursor = db.execute(
             """
-            SELECT current_number
-            FROM coupon_counter
-            WHERE id = 1
+            SELECT coupon
+            FROM users
+            ORDER BY id DESC
+            LIMIT 1
             """
-        ).fetchone()
-
-        if row is None:
-
-            current_number = INITIAL_COUPON_NUMBER
-
-            db.execute(
-                """
-                INSERT INTO coupon_counter (
-                    id,
-                    current_number
-                )
-                VALUES (1, ?)
-                """,
-                (
-                    current_number,
-                )
-            )
-
-        else:
-
-            current_number = row["current_number"]
-
-        next_number = current_number + 1
-
-        db.execute(
-            """
-            UPDATE coupon_counter
-            SET current_number = ?
-            WHERE id = 1
-            """,
-            (
-                next_number,
-            )
         )
 
-        db.commit()
+        row = cursor.fetchone()
 
-        return current_number
+        # Если база пустая — начинаем с 01268.
+        if row is None:
+            return 1268
+
+        last_coupon = row["coupon"]
+
+        # Берём только цифры.
+        digits = re.sub(r"\D", "", last_coupon)
+
+        if not digits:
+            return 1268
+
+        return int(digits) + 1
 
 
-# =========================================================
-# +1 МЕСЯЦ
-# =========================================================
+def generate_coupon():
 
-def add_one_month(dt):
+    number = get_next_coupon_number()
 
-    year = dt.year
-    month = dt.month + 1
-
-    if month == 13:
-
-        month = 1
-        year += 1
-
-    last_day = monthrange(
-        year,
-        month
-    )[1]
-
-    day = min(
-        dt.day,
-        last_day
-    )
-
-    return dt.replace(
-        year=year,
-        month=month,
-        day=day
-    )
+    return str(number).zfill(5)
 
 
 # =========================================================
-# СОЗДАНИЕ КУПОНА
+# СОЗДАНИЕ ПОЛЬЗОВАТЕЛЯ / КУПОНА
 # =========================================================
 
-def create_coupon(user_id):
+def create_coupon(
+    user_id: int,
+    phone: str,
+    prize: str
+):
 
-    created_at = datetime.now(
-        timezone.utc
-    )
+    coupon = generate_coupon()
 
-    expires_at = add_one_month(
-        created_at
-    )
+    created_at = datetime.now(timezone.utc)
 
-    coupon_number = (
-        get_next_coupon_number()
-    )
-
-    prize = secrets.choice(
-        PRIZES
-    )
+    # Срок действия — 1 месяц.
+    expires_at = created_at + relativedelta(months=1)
 
     with get_db() as db:
 
         db.execute(
             """
-            INSERT INTO coupons (
-                coupon_number,
+            INSERT INTO users (
                 user_id,
+                phone,
+                coupon,
                 prize,
                 created_at,
-                expires_at,
-                status
+                expires_at
             )
-            VALUES (?, ?, ?, ?, ?, 'active')
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                coupon_number,
                 user_id,
+                phone,
+                coupon,
                 prize,
                 created_at.isoformat(),
                 expires_at.isoformat()
@@ -533,16 +390,35 @@ def create_coupon(user_id):
 
         db.commit()
 
+    return coupon, expires_at
+
+
+# =========================================================
+# PHONE
+# =========================================================
+
+def normalize_phone(phone: str):
+
+    digits = re.sub(r"\D", "", phone)
+
+    if digits.startswith("8") and len(digits) == 11:
+        digits = "7" + digits[1:]
+
+    return digits
+
+
+def is_phone(phone: str):
+
+    digits = normalize_phone(phone)
+
     return (
-        coupon_number,
-        prize,
-        created_at,
-        expires_at
+        len(digits) == 11
+        and digits.startswith("7")
     )
 
 
 # =========================================================
-# ПОЛУЧЕНИЕ ТЕЛЕФОНА
+# CONTACT
 # =========================================================
 
 def get_phone_from_event(event):
@@ -605,7 +481,7 @@ def get_phone_from_event(event):
 
 
 # =========================================================
-# КНОПКИ ФИЛИАЛОВ
+# КНОПКИ
 # =========================================================
 
 def location_buttons():
@@ -623,85 +499,206 @@ def location_buttons():
                 {
                     "type": "callback",
                     "text": "2️⃣ ТРЦ Матрица",
-                    "payload": "location_matrica"
+                    "payload": "location_matrix"
                 }
             ]
         ]
     ).pack()
 
-
-# =========================================================
-# КНОПКИ ОТЗЫВОВ
-# =========================================================
 
 def review_buttons(location):
 
-    if location == "karla":
-
-        yandex = KARLA_YANDEX
-        twogis = KARLA_2GIS
-
-    else:
-
-        yandex = MATRICA_YANDEX
-        twogis = MATRICA_2GIS
+    data = LOCATIONS[location]
 
     return ButtonsPayload(
         buttons=[
-
             [
                 {
-                    "type": "link",
-                    "text": "⭐ Яндекс Карты",
-                    "url": yandex
+                    "type": "url",
+                    "text": "⭐ Яндекс",
+                    "url": data["yandex"]
                 }
             ],
-
             [
                 {
-                    "type": "link",
+                    "type": "url",
                     "text": "⭐ 2GIS",
-                    "url": twogis
+                    "url": data["2gis"]
                 }
             ],
-
             [
                 {
-                    "type": "link",
-                    "text": "⭐ ВКонтакте",
-                    "url": KARLA_VK
+                    "type": "url",
+                    "text": "⭐ VK",
+                    "url": data["vk"]
                 }
             ],
-
             [
                 {
-                    "type": "link",
+                    "type": "url",
                     "text": "⭐ Google",
-                    "url": KARLA_GOOGLE
+                    "url": data["google"]
                 }
             ],
-
             [
                 {
-                    "type": "link",
-                    "text": "👨‍💼 Написать Администратору",
+                    "type": "callback",
+                    "text": "📸 Как подтвердить отзыв?",
+                    "payload": "review_help"
+                }
+            ],
+            [
+                {
+                    "type": "url",
+                    "text": "👨‍💼 Написать администратору",
                     "url": f"max://user/{ADMIN_USER_ID}"
                 }
             ]
+        ]
+    ).pack()
 
+
+def after_review_buttons():
+
+    return ButtonsPayload(
+        buttons=[
+            [
+                {
+                    "type": "url",
+                    "text": "👨‍💼 Отправить скриншот администратору",
+                    "url": f"max://user/{ADMIN_USER_ID}"
+                }
+            ],
+            [
+                {
+                    "type": "callback",
+                    "text": "⭐ Вернуться к отзывам",
+                    "payload": "back_reviews"
+                }
+            ]
         ]
     ).pack()
 
 
 # =========================================================
-# СПРОСИТЬ ФИЛИАЛ
+# ВЫДАЧА КУПОНА
 # =========================================================
 
-async def ask_location(event):
+async def process_phone(
+    event,
+    user_id: int,
+    phone: str
+):
+
+    if not is_phone(phone):
+
+        await event.message.answer(
+            "❌ Не удалось распознать номер телефона.\n\n"
+            "Попробуйте поделиться номером ещё раз."
+        )
+
+        return
+
+    phone = normalize_phone(phone)
+
+    # -----------------------------------------------------
+    # Проверяем телефон.
+    # Один номер = один первый купон.
+    # -----------------------------------------------------
+
+    existing_phone = get_user_by_phone(phone)
+
+    if existing_phone:
+
+        waiting_phone.discard(user_id)
+
+        await event.message.answer(
+            "🎟 Этот номер телефона уже использовался "
+            "для получения купона.\n\n"
+            f"Ваш купон:\n\n"
+            f"🎁 №{existing_phone['coupon']}\n\n"
+            f"Приз:\n"
+            f"{existing_phone['prize']}\n\n"
+            "Если вы хотите посмотреть все свои купоны, "
+            "используйте кнопку «Мои купоны»."
+        )
+
+        # Показываем меню филиалов/отзывов.
+        waiting_location.add(user_id)
+
+        await event.message.answer(
+            "📍 Где вы отдыхали?",
+            attachments=[
+                location_buttons()
+            ]
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # Новый купон
+    # -----------------------------------------------------
+
+    # Равновероятный выбор приза.
+    import random
+
+    prize = random.choice(PRIZES)
+
+    try:
+
+        coupon, expires_at = create_coupon(
+            user_id=user_id,
+            phone=phone,
+            prize=prize
+        )
+
+    except sqlite3.IntegrityError:
+
+        logging.exception(
+            "Ошибка создания купона."
+        )
+
+        await event.message.answer(
+            "❌ Произошла ошибка при выдаче купона.\n"
+            "Попробуйте ещё раз."
+        )
+
+        return
+
+    waiting_phone.discard(user_id)
+
+    logging.info(
+        f"Новый купон: "
+        f"user_id={user_id}, "
+        f"phone={phone}, "
+        f"coupon={coupon}, "
+        f"prize={prize}"
+    )
+
+    expires_text = expires_at.strftime(
+        "%d.%m.%Y"
+    )
+
+    await event.message.answer(
+        "🎉 ПОЗДРАВЛЯЕМ!\n\n"
+        f"🎟 Ваш купон №{coupon}\n\n"
+        f"🎁 Ваш приз:\n"
+        f"{prize}\n\n"
+        f"⏳ Купон действует до {expires_text}.\n\n"
+        "Сохраните это сообщение или сделайте "
+        "скриншот — он понадобится при использовании "
+        "купона."
+    )
+
+    # -----------------------------------------------------
+    # Переходим к филиалу
+    # -----------------------------------------------------
+
+    waiting_location.add(user_id)
 
     await event.message.answer(
         "📍 Где вы отдыхали?\n\n"
-        "Пожалуйста, выберите филиал:",
+        "Выберите филиал, который вы посещали:",
         attachments=[
             location_buttons()
         ]
@@ -712,31 +709,26 @@ async def ask_location(event):
 # МЕНЮ ОТЗЫВОВ
 # =========================================================
 
-async def show_reviews(
-    event,
-    user_id,
-    location
-):
+async def show_reviews(event, user_id):
 
-    if location == "karla":
+    location = user_locations.get(user_id)
 
-        location_name = "Карла Маркса"
+    if not location:
+        return
 
-    else:
+    location_name = LOCATIONS[location]["name"]
 
-        location_name = "ТРЦ Матрица"
+    review_menu_users.add(user_id)
 
     await event.message.answer(
-
-        f"📍 Вы выбрали: {location_name}\n\n"
-
-        "Будем очень благодарны, "
-        "если вы оставите отзыв ❤️\n\n"
-        "Выберите площадку:"
-    )
-
-    await event.message.answer(
-        "👇 Оставить отзыв:",
+        f"⭐ Отзыв о посещении — {location_name}\n\n"
+        "Оставьте отзыв на одной из площадок ниже.\n\n"
+        "📸 ВАЖНО!\n\n"
+        "Чтобы подтвердить отзыв и получить "
+        "возможность испытать удачу в барабане 🎰, "
+        "после публикации отзыва сделайте скриншот "
+        "и отправьте его администратору.\n\n"
+        "Выберите площадку:",
         attachments=[
             review_buttons(location)
         ]
@@ -744,444 +736,7 @@ async def show_reviews(
 
 
 # =========================================================
-# КУПОНЫ ПОЛЬЗОВАТЕЛЯ
-# =========================================================
-
-def get_coupons(user_id):
-
-    with get_db() as db:
-
-        return db.execute(
-            """
-            SELECT *
-            FROM coupons
-            WHERE user_id = ?
-            ORDER BY coupon_number DESC
-            """,
-            (user_id,)
-        ).fetchall()
-
-
-async def show_my_coupons(
-    event,
-    user_id
-):
-
-    coupons = get_coupons(
-        user_id
-    )
-
-    if not coupons:
-
-        await event.message.answer(
-            "🎟 У вас пока нет купонов."
-        )
-
-        return
-
-    text = "🎟 ВАШИ КУПОНЫ\n\n"
-
-    for coupon in coupons:
-
-        expires = datetime.fromisoformat(
-            coupon["expires_at"]
-        )
-
-        text += (
-            "━━━━━━━━━━━━━━━━━━\n\n"
-            f"🎟 Купон: "
-            f"{coupon['coupon_number']:05d}\n\n"
-            f"🎁 Приз:\n"
-            f"{coupon['prize']}\n\n"
-            f"⏳ Действует до: "
-            f"{expires.strftime('%d.%m.%Y')}\n\n"
-        )
-
-    await event.message.answer(
-        text
-    )
-
-
-# =========================================================
-# CALLBACK
-# =========================================================
-
-@dp.message_callback()
-async def callback_handler(event):
-
-    logging.info(
-        "Получено callback-событие"
-    )
-
-    logging.info(
-        f"CALLBACK EVENT: {event}"
-    )
-
-    # -----------------------------------------------------
-    # Пытаемся получить payload
-    # -----------------------------------------------------
-
-    payload = None
-
-    callback = getattr(
-        event,
-        "callback",
-        None
-    )
-
-    if callback is not None:
-
-        payload = getattr(
-            callback,
-            "payload",
-            None
-        )
-
-    if payload is None:
-
-        payload = getattr(
-            event,
-            "payload",
-            None
-        )
-
-    logging.info(
-        f"CALLBACK PAYLOAD: {payload}"
-    )
-
-    # -----------------------------------------------------
-    # Получаем пользователя
-    # -----------------------------------------------------
-
-    user = getattr(
-        event,
-        "user",
-        None
-    )
-
-    if user is None:
-
-        message = getattr(
-            event,
-            "message",
-            None
-        )
-
-        if message is not None:
-
-            user = getattr(
-                message,
-                "sender",
-                None
-            )
-
-    if user is None:
-
-        logging.error(
-            "Не удалось определить пользователя callback."
-        )
-
-        return
-
-    user_id = user.user_id
-
-    logging.info(
-        f"CALLBACK USER: {user_id}"
-    )
-
-    # =====================================================
-    # КАРЛА МАРКСА
-    # =====================================================
-
-    if payload == "location_karla":
-
-        save_location(
-            user_id,
-            "karla"
-        )
-
-        await show_reviews(
-            event,
-            user_id,
-            "karla"
-        )
-
-        return
-
-    # =====================================================
-    # МАТРИЦА
-    # =====================================================
-
-    if payload == "location_matrica":
-
-        save_location(
-            user_id,
-            "matrica"
-        )
-
-        await show_reviews(
-            event,
-            user_id,
-            "matrica"
-        )
-
-        return
-
-    # =====================================================
-    # МОИ КУПОНЫ
-    # =====================================================
-
-    if payload == "my_coupons":
-
-        await show_my_coupons(
-            event,
-            user_id
-        )
-
-        return
-
-    logging.warning(
-        f"Неизвестный callback: {payload}"
-    )
-
-
-# =========================================================
-# /USERS
-# =========================================================
-
-async def users_command(event):
-
-    user_id = (
-        event.message.sender.user_id
-    )
-
-    if user_id not in ADMIN_IDS:
-
-        await event.message.answer(
-            "❌ У вас нет доступа."
-        )
-
-        return
-
-    with get_db() as db:
-
-        users_count = db.execute(
-            """
-            SELECT COUNT(*)
-            FROM users
-            """
-        ).fetchone()[0]
-
-        coupons_count = db.execute(
-            """
-            SELECT COUNT(*)
-            FROM coupons
-            """
-        ).fetchone()[0]
-
-        karla_count = db.execute(
-            """
-            SELECT COUNT(*)
-            FROM users
-            WHERE location = 'karla'
-            """
-        ).fetchone()[0]
-
-        matrica_count = db.execute(
-            """
-            SELECT COUNT(*)
-            FROM users
-            WHERE location = 'matrica'
-            """
-        ).fetchone()[0]
-
-    await event.message.answer(
-
-        "👑 СТАТИСТИКА\n\n"
-
-        f"👥 Участников: {users_count}\n"
-        f"🎟 Купонов: {coupons_count}\n\n"
-
-        "📍 ФИЛИАЛЫ\n\n"
-
-        f"Карла Маркса: {karla_count}\n"
-        f"ТРЦ Матрица: {matrica_count}"
-    )
-
-
-# =========================================================
-# ОБРАБОТКА ТЕЛЕФОНА
-# =========================================================
-
-async def process_phone(
-    event,
-    user_id,
-    phone
-):
-
-    if not is_phone(phone):
-
-        await event.message.answer(
-            "❌ Не удалось распознать номер.\n\n"
-            "Попробуйте поделиться номером ещё раз."
-        )
-
-        return
-
-    phone = normalize_phone(
-        phone
-    )
-
-    # =====================================================
-    # УЖЕ ЕСТЬ ПОЛЬЗОВАТЕЛЬ
-    # =====================================================
-
-    existing = get_user(
-        user_id
-    )
-
-    if existing:
-
-        waiting_phone.discard(
-            user_id
-        )
-
-        await event.message.answer(
-
-            "ℹ️ Вы уже зарегистрированы.\n\n"
-
-            "Повторная отправка номера "
-            "не создаёт новый купон."
-        )
-
-        if existing["location"]:
-
-            await show_reviews(
-                event,
-                user_id,
-                existing["location"]
-            )
-
-        else:
-
-            await ask_location(
-                event
-            )
-
-        return
-
-    # =====================================================
-    # ТЕЛЕФОН УЖЕ ИСПОЛЬЗОВАЛСЯ
-    # =====================================================
-
-    phone_owner = get_user_by_phone(
-        phone
-    )
-
-    if phone_owner:
-
-        waiting_phone.discard(
-            user_id
-        )
-
-        await event.message.answer(
-
-            "❌ Этот номер телефона уже "
-            "использовался для получения купона."
-        )
-
-        return
-
-    # =====================================================
-    # СОЗДАЁМ ПОЛЬЗОВАТЕЛЯ
-    # =====================================================
-
-    try:
-
-        create_user(
-            user_id,
-            phone
-        )
-
-    except sqlite3.IntegrityError:
-
-        logging.exception(
-            "Ошибка добавления пользователя"
-        )
-
-        await event.message.answer(
-            "❌ Не удалось зарегистрировать "
-            "пользователя. Попробуйте ещё раз."
-        )
-
-        return
-
-    waiting_phone.discard(
-        user_id
-    )
-
-    # =====================================================
-    # СОЗДАЁМ КУПОН
-    # =====================================================
-
-    try:
-
-        (
-            coupon_number,
-            prize,
-            created_at,
-            expires_at
-        ) = create_coupon(
-            user_id
-        )
-
-    except Exception:
-
-        logging.exception(
-            "Ошибка создания купона"
-        )
-
-        await event.message.answer(
-            "❌ Произошла ошибка при создании "
-            "купона. Обратитесь к администратору."
-        )
-
-        return
-
-    # =====================================================
-    # ОТПРАВЛЯЕМ КУПОН
-    # =====================================================
-
-    await event.message.answer(
-
-        "🎉 ПОЗДРАВЛЯЕМ!\n\n"
-
-        "Вы получили новый купон! 🎁\n\n"
-
-        f"🎟 НОМЕР КУПОНА:\n"
-        f"{coupon_number:05d}\n\n"
-
-        f"🎁 ВАШ ПРИЗ:\n"
-        f"{prize}\n\n"
-
-        f"⏳ Действует до: "
-        f"{expires_at.strftime('%d.%m.%Y')}\n\n"
-
-        "Покажите это сообщение "
-        "администратору или сделайте скриншот."
-    )
-
-    # =====================================================
-    # ПОСЛЕ КУПОНА — ФИЛИАЛ
-    # =====================================================
-
-    await ask_location(
-        event
-    )
-
-
-# =========================================================
-# ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
+# MESSAGES
 # =========================================================
 
 @dp.message_created()
@@ -1206,31 +761,30 @@ async def messages(event: MessageCreated):
 
     if text.lower() == "/users":
 
-        await users_command(
-            event
+        if user_id not in ADMIN_IDS:
+
+            await event.message.answer(
+                "❌ У вас нет доступа к этой команде."
+            )
+
+            return
+
+        count = get_users_count()
+
+        await event.message.answer(
+            "👥 Статистика бота\n\n"
+            f"Всего участников: {count}"
         )
 
         return
 
     # =====================================================
-    # ВАЖНО:
-    # НИКАКОГО /coupon НЕТ
+    # CONTACT
     # =====================================================
 
-    # =====================================================
-    # КОНТАКТ
-    # =====================================================
-
-    phone = get_phone_from_event(
-        event
-    )
+    phone = get_phone_from_event(event)
 
     if phone:
-
-        logging.info(
-            f"Получен телефон "
-            f"user_id={user_id}"
-        )
 
         await process_phone(
             event,
@@ -1239,6 +793,121 @@ async def messages(event: MessageCreated):
         )
 
         return
+
+    # =====================================================
+    # CALLBACK
+    #
+    # В разных версиях maxapi callback может приходить
+    # немного по-разному. Поэтому ниже максимально
+    # безопасно пытаемся получить payload.
+    # =====================================================
+
+    payload = getattr(
+        event,
+        "callback",
+        None
+    )
+
+    if payload is None:
+        payload = getattr(
+            event,
+            "payload",
+            None
+        )
+
+    if payload is not None:
+
+        callback_payload = getattr(
+            payload,
+            "payload",
+            None
+        )
+
+        if callback_payload is None:
+
+            callback_payload = getattr(
+                payload,
+                "callback_data",
+                None
+            )
+
+        if callback_payload is None:
+
+            callback_payload = str(payload)
+
+        # -------------------------------------------------
+        # КАРЛА МАРКСА
+        # -------------------------------------------------
+
+        if "location_karla" in callback_payload:
+
+            user_locations[user_id] = "karla"
+
+            waiting_location.discard(user_id)
+
+            await show_reviews(
+                event,
+                user_id
+            )
+
+            return
+
+        # -------------------------------------------------
+        # МАТРИЦА
+        # -------------------------------------------------
+
+        if "location_matrix" in callback_payload:
+
+            user_locations[user_id] = "matrix"
+
+            waiting_location.discard(user_id)
+
+            await show_reviews(
+                event,
+                user_id
+            )
+
+            return
+
+        # -------------------------------------------------
+        # ПОМОЩЬ ПО ОТЗЫВУ
+        # -------------------------------------------------
+
+        if "review_help" in callback_payload:
+
+            await event.message.answer(
+                "📸 Как подтвердить отзыв\n\n"
+                "1️⃣ Выберите любую площадку выше.\n\n"
+                "2️⃣ Оставьте отзыв о вашем посещении.\n\n"
+                "3️⃣ После публикации сделайте "
+                "скриншот отзыва.\n\n"
+                "4️⃣ Отправьте скриншот администратору.\n\n"
+                "5️⃣ Администратор проверит отзыв "
+                "и подтвердит вашу крутку 🎰.\n\n"
+                "❤️ Один подтверждённый отзыв = "
+                "одна крутка.\n\n"
+                "Если вы оставили отзывы на нескольких "
+                "площадках, отправьте скриншот каждого "
+                "отзыва.",
+                attachments=[
+                    after_review_buttons()
+                ]
+            )
+
+            return
+
+        # -------------------------------------------------
+        # НАЗАД К ОТЗЫВАМ
+        # -------------------------------------------------
+
+        if "back_reviews" in callback_payload:
+
+            await show_reviews(
+                event,
+                user_id
+            )
+
+            return
 
     # =====================================================
     # ЕСЛИ ЖДЁМ ТЕЛЕФОН
@@ -1257,13 +926,10 @@ async def messages(event: MessageCreated):
         else:
 
             await event.message.answer(
-
                 "❌ Это не похоже на номер телефона.\n\n"
-
                 "Нажмите кнопку "
                 "«📱 Поделиться номером» "
                 "или отправьте номер вручную.\n\n"
-
                 "Например:\n"
                 "89991234567"
             )
@@ -1271,12 +937,25 @@ async def messages(event: MessageCreated):
         return
 
     # =====================================================
+    # ЕСЛИ ЖДЁМ ФИЛИАЛ
+    # =====================================================
+
+    if user_id in waiting_location:
+
+        await event.message.answer(
+            "📍 Пожалуйста, выберите филиал "
+            "с помощью кнопки:\n\n"
+            "1️⃣ Карла Маркса\n"
+            "2️⃣ ТРЦ Матрица"
+        )
+
+        return
+
+    # =====================================================
     # ПЕРВОЕ СООБЩЕНИЕ
     # =====================================================
 
-    waiting_phone.add(
-        user_id
-    )
+    waiting_phone.add(user_id)
 
     buttons = ButtonsPayload(
         buttons=[
@@ -1298,20 +977,15 @@ async def messages(event: MessageCreated):
     )
 
     await event.message.answer(
-
         text=(
-
             f"{first_name}, здравствуйте! 👋\n\n"
-
             "Вы нашли секретный подарок! 🎁\n\n"
-
-            "Чтобы получить подарок, "
-            "подтвердите свой номер телефона.\n\n"
-
-            "Нажмите кнопку ниже "
-            "и поделитесь номером."
+            "Чтобы он стал вашим, бот должен "
+            "убедиться, что вы — реальный человек.\n\n"
+            "Для подтверждения нажмите кнопку ниже "
+            "и поделитесь своим номером телефона.\n\n"
+            "Или можете отправить номер вручную."
         ),
-
         attachments=[
             buttons
         ]
@@ -1330,18 +1004,9 @@ async def main():
         "Бот запускается..."
     )
 
-    logging.info(
-        f"Участников в базе: "
-        f"{get_users_count()}"
-    )
-
-    await dp.start_polling(
-        bot
-    )
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
 
-    asyncio.run(
-        main()
-    )
+    asyncio.run(main())
