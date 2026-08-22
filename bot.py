@@ -29,7 +29,7 @@ logging.basicConfig(
 # НАСТРОЙКИ
 # =========================================================
 
-TOKEN = "ВСТАВЬ_СЮДА_НОВЫЙ_ТОКЕН"
+TOKEN = "f9LHodD0cOLJZ_QQj9kIYtnBMD3eCbHBwsf0UQWM34VCwzIwHu7wFVCjZ47aEkfWXziwgMn1oScOGgBlLoF5"
 
 DB_NAME = "users.db"
 
