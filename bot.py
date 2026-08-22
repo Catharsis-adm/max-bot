@@ -112,7 +112,6 @@ KARLA_YANDEX = (
 
 KARLA_2GIS = (
     "https://2gis.ru/izhevsk/firm/70000001050199074/"
-    "tab/reviews/addreview?m=53.201516%2C56.85975%2F16"
 )
 
 KARLA_VK = (
@@ -141,8 +140,6 @@ MATRICA_YANDEX = (
 MATRICA_2GIS = (
     "https://2gis.ru/izhevsk/search/vr-%D0%B0%D1%80%D0%B5%D0%BD%D0%B0"
     "%20Connect/firm/70000001114081013/"
-    "53.125482%2C56.832989/tab/reviews/addreview"
-    "?m=53.163537%2C56.846359%2F14.26"
 )
 
 MATRICA_VK = (
